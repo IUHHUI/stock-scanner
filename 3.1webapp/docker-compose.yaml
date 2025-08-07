@@ -1,0 +1,50 @@
+# AI增强股票分析系统 - 简化版 Docker Compose 配置
+# Enhanced AI Stock Analysis System - Simplified Docker Compose Configuration
+# Version: 3.1.0 - Minimal Deployment
+
+version: '3.8'
+
+services:
+  # 主应用服务 - 简化版
+  stock-analyzer:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: stock-analyzer:3.1.0
+    container_name: stock-analyzer-webapp
+    restart: unless-stopped
+    
+    # 端口映射
+    ports:
+      - "8102:5000"
+    
+    # 环境变量
+    environment:
+      - PYTHONPATH=/app
+      - TZ=Asia/Shanghai
+      - FLASK_ENV=production
+      - FLASK_DEBUG=false
+      # 可选配置
+      - MAX_WORKERS=4
+      - CACHE_TIMEOUT=3600
+      - LOG_LEVEL=INFO
+    
+    # 数据卷挂载 (使用绑定挂载，简单直接)
+    volumes:
+      # 配置文件
+      - ./config.json:/app/config.json:ro
+    
+    # 健康检查
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5000/api/status"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    
+    # 日志配置
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "100m"
+        max-file: "3" 
