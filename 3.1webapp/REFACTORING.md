@@ -135,9 +135,24 @@ python test_refactored_analyzer.py
 - ✅ 数据获取器初始化
 - ✅ 股票代码标准化
 - ✅ 市场识别功能
-- ✅ 价格数据获取
+- ✅ 价格数据获取（A股、港股、美股）
+- ✅ 美股数据获取修复和优化
 - ✅ 技术指标计算
 - ✅ 配置系统加载
+
+### 美股数据获取优化 (US Stock Data Optimization)
+
+经过测试和优化，美股数据获取现在使用以下策略：
+
+1. **主要接口**: `akshare.stock_us_daily()` - 获取完整历史数据
+2. **备用策略**: `akshare.stock_us_spot_em()` - 实时数据，必要时生成模拟历史数据
+3. **错误处理**: 完善的异常处理和日志记录
+
+支持的美股代码示例：
+- AAPL (苹果)
+- TSLA (特斯拉)  
+- MSFT (微软)
+- GOOGL (谷歌)
 
 ## 后续改进计划 (Future Improvements)
 

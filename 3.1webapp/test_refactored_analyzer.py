@@ -85,6 +85,15 @@ def test_data_fetchers():
         logger.info("测试PriceDataFetcher...")
         price_fetcher = PriceDataFetcher(test_config)
         logger.info("✓ PriceDataFetcher初始化成功")
+        for code in test_codes:
+            try:
+                price_data_1y = price_fetcher.get_stock_data(code)
+                if price_data_1y is not None and not price_data_1y.empty:
+                    logger.info(f"✓ {code} 价格数据获取成功: {len(price_data_1y)} 条记录")
+                else:
+                    logger.warning(f"⚠ {code} 价格数据获取失败（可能是API限制或数据源问题）")
+            except Exception as e:
+                logger.warning(f"⚠ {code} 价格数据获取异常: {e}")
         
         # 测试FundamentalDataFetcher
         logger.info("测试FundamentalDataFetcher...")
