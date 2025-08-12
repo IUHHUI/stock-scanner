@@ -1,89 +1,45 @@
-# AI增强股票分析系统 - 3.1webapp版本依赖包
-# Enhanced AI Stock Analysis System - Dependencies for 3.1webapp
-
-# ====== 核心依赖 (Core Dependencies) ======
-# Web框架
-Flask==3.0.0
-Flask-CORS==4.0.0
-
-# 数据处理 - 更新到支持Python 3.13的版本
-pandas==2.2.0
-numpy==1.26.0
-
-# 股票数据源
-akshare==1.12.0
-
-# ====== AI模型依赖 (AI Models) ======
-# OpenAI GPT系列
-openai==1.3.0
-
-# Anthropic Claude系列
-anthropic==0.7.8
-
-# 智谱AI ChatGLM系列
-zhipuai==2.0.1
-
-# ====== 系统依赖 (System Dependencies) ======
-# 异步支持
-asyncio-compat==0.1.2
-
-# 日期时间处理
-python-dateutil==2.8.2
-
-# JSON处理增强
-ujson==5.9.0
-
-# 加密和安全
-cryptography==41.0.8
-
-# UUID生成
-uuid==1.30
-
-# 队列处理
-queue-manager==0.9.0
-
-# ====== 可选依赖 (Optional Dependencies) ======
-# 进度条显示
-tqdm==4.66.1
-
-# 正则表达式增强
-regex==2023.12.25
-
-# 数学计算
-scipy==1.12.0
-
-# 时区处理
-pytz==2023.3
-
-# HTTP请求
-requests==2.31.0
-
-# ====== 开发和调试依赖 (Development Dependencies) ======
-# 日志增强
-colorlog==6.8.0
-
-# 配置文件处理
-pyyaml==6.0.1
-
-# 环境变量管理
-python-dotenv==1.0.0
-
-# ====== 版本说明 (Version Notes) ======
-# - Flask 3.0.0: 最新稳定版本，支持Python 3.13
-# - pandas 2.2.0: 支持Python 3.13的数据处理核心版本
-# - numpy 1.26.0: 支持Python 3.13的数值计算基础
-# - akshare 1.12.0: 最新稳定版，支持A股/港股/美股
-# - openai 1.3.0: 支持新版API接口
-# - anthropic 0.7.8: Claude API官方客户端
-# - zhipuai 2.0.1: 智谱AI官方SDK
-
-# ====== 安装说明 (Installation Guide) ======
-# 1. 基础安装: pip install -r requirements.txt
-# 2. 仅核心功能: pip install Flask Flask-CORS pandas numpy akshare
-# 3. 仅AI功能: pip install openai anthropic zhipuai
-# 4. 开发环境: pip install -r requirements.txt --upgrade
-
-# ====== 兼容性说明 (Compatibility Notes) ======
-# - Python 3.8+ (推荐Python 3.11+，完全支持Python 3.13)
-# - 支持 Windows/Linux/macOS
-# - 建议使用虚拟环境: python -m venv venv 
+aiohappyeyeballs==2.6.1
+aiohttp==3.12.15
+aiosignal==1.4.0
+akracer==0.0.13
+akshare==1.17.32
+async-timeout==5.0.1
+attrs==25.3.0
+beautifulsoup4==4.13.4
+blinker==1.9.0
+certifi==2025.8.3
+charset-normalizer==3.4.3
+click==8.2.1
+decorator==5.2.1
+et_xmlfile==2.0.0
+Flask==3.1.1
+flask-cors==6.0.1
+frozenlist==1.7.0
+html5lib==1.1
+idna==3.10
+itsdangerous==2.2.0
+Jinja2==3.1.6
+jsonpath==0.82.2
+lxml==6.0.0
+MarkupSafe==3.0.2
+multidict==6.6.4
+nest-asyncio==1.6.0
+numpy==2.2.6
+openpyxl==3.1.5
+pandas==2.3.1
+propcache==0.3.2
+py-mini-racer==0.6.0
+python-dateutil==2.9.0.post0
+pytz==2025.2
+requests==2.32.4
+six==1.17.0
+soupsieve==2.7
+tabulate==0.9.0
+tqdm==4.67.1
+typing_extensions==4.14.1
+tzdata==2025.2
+urllib3==2.5.0
+webencodings==0.5.1
+Werkzeug==3.1.3
+xlrd==2.0.2
+yarl==1.20.1
