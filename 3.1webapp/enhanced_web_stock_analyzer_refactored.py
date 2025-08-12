@@ -721,10 +721,59 @@ class EnhancedWebStockAnalyzer:
         return max(0, min(100, score))
     
     def calculate_fundamental_score(self, fundamental_data):
-        """计算基本面得分"""
-        if not fundamental_data:
+        """计算基本面得分（支持多市场）"""
+        try:
+            score = 50
+            
+            # 财务指标评分
+            financial_indicators = fundamental_data.get('financial_indicators', {})
+            if len(financial_indicators) >= 10:  # 调整阈值以适应不同市场
+                score += 15
+                
+                # 通用盈利能力评分（适应不同市场的指标名称）
+                roe = (financial_indicators.get('净资产收益率', 0) or 
+                      financial_indicators.get('ROE', 0) or 
+                      financial_indicators.get('roe', 0))
+                if roe > 15:
+                    score += 10
+                elif roe > 10:
+                    score += 5
+                elif roe < 5:
+                    score -= 5
+                
+                # 通用估值指标
+                pe_ratio = (financial_indicators.get('市盈率', 0) or 
+                           financial_indicators.get('PE_Ratio', 0) or 
+                           financial_indicators.get('pe_ratio', 0))
+                if 0 < pe_ratio < 20:
+                    score += 10
+                elif pe_ratio > 50:
+                    score -= 5
+                
+                # 债务水平评估
+                debt_ratio = (financial_indicators.get('资产负债率', 50) or 
+                             financial_indicators.get('debt_ratio', 50))
+                if debt_ratio < 30:
+                    score += 5
+                elif debt_ratio > 70:
+                    score -= 10
+            
+            # 估值评分
+            valuation = fundamental_data.get('valuation', {})
+            if valuation:
+                score += 10
+            
+            # 业绩预告评分
+            performance_forecast = fundamental_data.get('performance_forecast', [])
+            if performance_forecast:
+                score += 10
+            
+            score = max(0, min(100, score))
+            return score
+            
+        except Exception as e:
+            self.logger.error(f"基本面评分失败: {str(e)}")
             return 50
-        return 60  # 简化实现，实际应根据财务指标计算
     
     def calculate_advanced_sentiment_analysis(self, news_data):
         """计算高级情绪分析"""
@@ -732,12 +781,28 @@ class EnhancedWebStockAnalyzer:
     
     def calculate_sentiment_score(self, sentiment_analysis):
         """计算情绪分析得分"""
-        if not sentiment_analysis:
+        try:
+            overall_sentiment = sentiment_analysis.get('overall_sentiment', 0.0)
+            confidence_score = sentiment_analysis.get('confidence_score', 0.0)
+            total_analyzed = sentiment_analysis.get('total_analyzed', 0)
+            
+            # 基础得分：将情绪得分从[-1,1]映射到[0,100]
+            base_score = (overall_sentiment + 1) * 50
+            
+            # 置信度调整
+            confidence_adjustment = confidence_score * 10
+            
+            # 新闻数量调整
+            news_adjustment = min(total_analyzed / 100, 1.0) * 10
+            
+            final_score = base_score + confidence_adjustment + news_adjustment
+            final_score = max(0, min(100, final_score))
+            
+            return final_score
+            
+        except Exception as e:
+            self.logger.error(f"情绪得分计算失败: {e}")
             return 50
-        
-        overall_sentiment = sentiment_analysis.get('overall_sentiment', 0.0)
-        score = 50 + (overall_sentiment * 30)  # 转换到0-100范围
-        return max(0, min(100, score))
     
     def calculate_comprehensive_score(self, scores):
         """计算综合得分"""
@@ -755,21 +820,417 @@ class EnhancedWebStockAnalyzer:
         return max(0, min(100, comprehensive))
     
     def generate_recommendation(self, scores, market=None):
-        """生成投资建议"""
-        comprehensive_score = scores.get('comprehensive', 50)
-        
-        if comprehensive_score >= 70:
-            return "买入"
-        elif comprehensive_score >= 60:
-            return "持有"
-        elif comprehensive_score <= 40:
-            return "卖出"
-        else:
-            return "观望"
+        """根据得分生成投资建议（支持多市场）"""
+        try:
+            comprehensive_score = scores.get('comprehensive', 50)
+            technical_score = scores.get('technical', 50)
+            fundamental_score = scores.get('fundamental', 50)
+            sentiment_score = scores.get('sentiment', 50)
+            
+            # 基础建议逻辑
+            if comprehensive_score >= 80:
+                if technical_score >= 75 and fundamental_score >= 75:
+                    base_recommendation = "强烈推荐买入"
+                else:
+                    base_recommendation = "推荐买入"
+            elif comprehensive_score >= 65:
+                if sentiment_score >= 60:
+                    base_recommendation = "建议买入"
+                else:
+                    base_recommendation = "谨慎买入"
+            elif comprehensive_score >= 45:
+                base_recommendation = "持有观望"
+            elif comprehensive_score >= 30:
+                base_recommendation = "建议减仓"
+            else:
+                base_recommendation = "建议卖出"
+            
+            # 根据市场特点调整建议
+            if market == 'hk_stock':
+                base_recommendation += " (港股)"
+            elif market == 'us_stock':
+                base_recommendation += " (美股)"
+            elif market == 'a_stock':
+                base_recommendation += " (A股)"
+                
+            return base_recommendation
+                
+        except Exception as e:
+            self.logger.warning(f"生成投资建议失败: {e}")
+            return "数据不足，建议谨慎"
     
-    def generate_ai_analysis(self, analysis_data):
-        """生成AI分析（简化版）"""
-        return "AI分析功能需要配置API密钥"
+    def _build_enhanced_ai_analysis_prompt(self, stock_code, stock_name, scores, technical_analysis, 
+                                        fundamental_data, sentiment_analysis, price_info, market=None):
+        """构建增强版AI分析提示词（支持多市场）"""
+        
+        market_info = ""
+        if market:
+            market_config = self.market_config.get(market, {})
+            currency = market_config.get('currency', 'CNY')
+            timezone = market_config.get('timezone', 'Asia/Shanghai')
+            market_info = f"""
+**市场信息：**
+- 交易市场：{market.upper().replace('_', '')}
+- 计价货币：{currency}
+- 时区：{timezone}
+"""
+        
+        # 提取财务指标
+        financial_indicators = fundamental_data.get('financial_indicators', {})
+        financial_text = ""
+        if financial_indicators:
+            financial_text = "**财务指标详情：**\n"
+            for i, (key, value) in enumerate(financial_indicators.items(), 1):
+                if isinstance(value, (int, float)) and value != 0:
+                    financial_text += f"{i}. {key}: {value}\n"
+        
+        # 构建完整的提示词
+        prompt = f"""请作为一位资深的全球股票分析师，基于以下详细数据对股票进行深度分析：
+**股票基本信息：**
+- 股票代码：{stock_code}
+- 股票名称：{stock_name}
+- 当前价格：{price_info.get('current_price', 0):.2f}
+- 涨跌幅：{price_info.get('price_change', 0):.2f}%
+- 成交量比率：{price_info.get('volume_ratio', 1):.2f}
+- 波动率：{price_info.get('volatility', 0):.2f}%
+{market_info}
+**技术分析详情：**
+- 均线趋势：{technical_analysis.get('ma_trend', '未知')}
+- RSI指标：{technical_analysis.get('rsi', 50):.1f}
+- MACD信号：{technical_analysis.get('macd_signal', '未知')}
+- 布林带位置：{technical_analysis.get('bb_position', 0.5):.2f}
+- 成交量状态：{technical_analysis.get('volume_status', '未知')}
+{financial_text}
+**市场情绪分析：**
+- 整体情绪得分：{sentiment_analysis.get('overall_sentiment', 0):.3f}
+- 情绪趋势：{sentiment_analysis.get('sentiment_trend', '中性')}
+- 置信度：{sentiment_analysis.get('confidence_score', 0):.2f}
+- 分析新闻数量：{sentiment_analysis.get('total_analyzed', 0)}条
+**综合评分：**
+- 技术面得分：{scores.get('technical', 50):.1f}/100
+- 基本面得分：{scores.get('fundamental', 50):.1f}/100
+- 情绪面得分：{scores.get('sentiment', 50):.1f}/100
+- 综合得分：{scores.get('comprehensive', 50):.1f}/100
+**分析要求：**
+请基于以上数据，从多市场角度进行深度分析：
+1. **市场特征分析**：
+   - 分析该股票所属市场的特点和投资环境
+   - 评估市场流动性、监管环境、交易机制等因素
+   - 对比不同市场的估值体系和投资逻辑
+2. **跨市场比较**：
+   - 如果有同类型公司在其他市场交易，进行对比分析
+   - 评估汇率风险和地缘政治因素影响
+   - 分析市场间的资金流动和套利机会
+3. **投资策略建议**：
+   - 针对不同市场特点制定投资策略
+   - 考虑市场开放时间、交易成本、税务影响
+   - 提供适合该市场的风险管理建议
+4. **全球化视角**：
+   - 分析公司的国际化程度和全球竞争力
+   - 评估宏观经济和政策对该市场的影响
+   - 预测市场间的联动效应
+请用专业、客观的语言进行分析，确保考虑多市场投资的复杂性。"""
+        return prompt
+    
+    def generate_ai_analysis(self, analysis_data, enable_streaming=False, stream_callback=None):
+        """生成AI增强分析（支持多市场）"""
+        try:
+            self.logger.info("🤖 开始AI深度分析（支持多市场）...")
+            
+            stock_code = analysis_data.get('stock_code', '')
+            stock_name = analysis_data.get('stock_name', stock_code)
+            scores = analysis_data.get('scores', {})
+            technical_analysis = analysis_data.get('technical_analysis', {})
+            fundamental_data = analysis_data.get('fundamental_data', {})
+            sentiment_analysis = analysis_data.get('sentiment_analysis', {})
+            price_info = analysis_data.get('price_info', {})
+            
+            # 检测市场
+            _, market = self.normalize_stock_code(stock_code)
+            
+            # 构建增强版AI分析提示词
+            prompt = self._build_enhanced_ai_analysis_prompt(
+                stock_code, stock_name, scores, technical_analysis, 
+                fundamental_data, sentiment_analysis, price_info, market
+            )
+            
+            # 调用AI API（支持流式）
+            ai_response = self._call_ai_api(prompt, enable_streaming, stream_callback)
+            
+            if ai_response:
+                self.logger.info("✅ AI深度分析完成（多市场）")
+                return ai_response
+            else:
+                self.logger.warning("⚠️ AI API不可用，使用高级分析模式")
+                return self._advanced_rule_based_analysis(analysis_data, market)
+                
+        except Exception as e:
+            self.logger.error(f"AI分析失败: {e}")
+            return self._advanced_rule_based_analysis(analysis_data, market)
+    
+    def _call_ai_api(self, prompt, enable_streaming=False, stream_callback=None):
+        """调用AI API - 支持流式输出（多市场通用）"""
+        try:
+            model_preference = self.config.get('ai', {}).get('model_preference', 'openai')
+            
+            if model_preference == 'openai' and self.api_keys.get('openai'):
+                result = self._call_openai_api(prompt, enable_streaming, stream_callback)
+                if result:
+                    return result
+            
+            elif model_preference == 'anthropic' and self.api_keys.get('anthropic'):
+                result = self._call_claude_api(prompt, enable_streaming, stream_callback)
+                if result:
+                    return result
+                    
+            elif model_preference == 'zhipu' and self.api_keys.get('zhipu'):
+                result = self._call_zhipu_api(prompt, enable_streaming, stream_callback)
+                if result:
+                    return result
+            
+            # 尝试其他可用的服务
+            if self.api_keys.get('openai') and model_preference != 'openai':
+                self.logger.info("尝试备用OpenAI API...")
+                result = self._call_openai_api(prompt, enable_streaming, stream_callback)
+                if result:
+                    return result
+                    
+            if self.api_keys.get('anthropic') and model_preference != 'anthropic':
+                self.logger.info("尝试备用Claude API...")
+                result = self._call_claude_api(prompt, enable_streaming, stream_callback)
+                if result:
+                    return result
+                    
+            if self.api_keys.get('zhipu') and model_preference != 'zhipu':
+                self.logger.info("尝试备用智谱AI API...")
+                result = self._call_zhipu_api(prompt, enable_streaming, stream_callback)
+                if result:
+                    return result
+            
+            return None
+                
+        except Exception as e:
+            self.logger.error(f"AI API调用失败: {e}")
+            return None
+    
+    def _call_openai_api(self, prompt, enable_streaming=False, stream_callback=None):
+        """调用OpenAI API（简化版）"""
+        try:
+            import openai
+            
+            api_key = self.api_keys.get('openai')
+            if not api_key:
+                return None
+            
+            # 使用新版OpenAI API
+            client = openai.OpenAI(api_key=api_key)
+            
+            api_base = self.config.get('ai', {}).get('api_base_urls', {}).get('openai')
+            if api_base:
+                client.base_url = api_base
+            
+            model = self.config.get('ai', {}).get('models', {}).get('openai', 'gpt-4o-mini')
+            max_tokens = self.config.get('ai', {}).get('max_tokens', 6000)
+            temperature = self.config.get('ai', {}).get('temperature', 0.7)
+            
+            messages = [
+                {"role": "system", "content": "你是一位资深的全球股票分析师，具有丰富的多市场投资经验。请提供专业、客观、有深度的股票分析。"},
+                {"role": "user", "content": prompt}
+            ]
+            
+            # 使用新版API调用
+            if enable_streaming and stream_callback:
+                response = client.chat.completions.create(
+                    model=model,
+                    messages=messages,
+                    max_tokens=max_tokens,
+                    temperature=temperature,
+                    stream=True
+                )
+                
+                full_response = ""
+                for chunk in response:
+                    if chunk.choices[0].delta.content:
+                        content = chunk.choices[0].delta.content
+                        full_response += content
+                        if stream_callback:
+                            stream_callback(content)
+                
+                return full_response
+            else:
+                response = client.chat.completions.create(
+                    model=model,
+                    messages=messages,
+                    max_tokens=max_tokens,
+                    temperature=temperature
+                )
+                return response.choices[0].message.content
+                
+        except Exception as e:
+            self.logger.error(f"OpenAI API调用失败: {e}")
+            return None
+    
+    def _call_claude_api(self, prompt, enable_streaming=False, stream_callback=None):
+        """调用Claude API"""
+        try:
+            import anthropic
+            
+            api_key = self.api_keys.get('anthropic')
+            if not api_key:
+                return None
+            
+            client = anthropic.Anthropic(api_key=api_key)
+            
+            model = self.config.get('ai', {}).get('models', {}).get('anthropic', 'claude-3-haiku-20240307')
+            max_tokens = self.config.get('ai', {}).get('max_tokens', 6000)
+            
+            if enable_streaming and stream_callback:
+                with client.messages.stream(
+                    model=model,
+                    max_tokens=max_tokens,
+                    messages=[
+                        {"role": "user", "content": prompt}
+                    ]
+                ) as stream:
+                    full_response = ""
+                    for text in stream.text_stream:
+                        full_response += text
+                        if stream_callback:
+                            stream_callback(text)
+                
+                return full_response
+            else:
+                response = client.messages.create(
+                    model=model,
+                    max_tokens=max_tokens,
+                    messages=[
+                        {"role": "user", "content": prompt}
+                    ]
+                )
+                
+                return response.content[0].text
+            
+        except Exception as e:
+            self.logger.error(f"Claude API调用失败: {e}")
+            return None
+    
+    def _call_zhipu_api(self, prompt, enable_streaming=False, stream_callback=None):
+        """调用智谱AI API"""
+        try:
+            api_key = self.api_keys.get('zhipu')
+            if not api_key:
+                return None
+            
+            model = self.config.get('ai', {}).get('models', {}).get('zhipu', 'chatglm_turbo')
+            max_tokens = self.config.get('ai', {}).get('max_tokens', 6000)
+            temperature = self.config.get('ai', {}).get('temperature', 0.7)
+            
+            try:
+                import zhipuai
+                zhipuai.api_key = api_key
+                
+                if hasattr(zhipuai, 'ZhipuAI'):
+                    client = zhipuai.ZhipuAI(api_key=api_key)
+                    
+                    if enable_streaming and stream_callback:
+                        response = client.chat.completions.create(
+                            model=model,
+                            messages=[
+                                {"role": "user", "content": prompt}
+                            ],
+                            temperature=temperature,
+                            max_tokens=max_tokens,
+                            stream=True
+                        )
+                        
+                        full_response = ""
+                        for chunk in response:
+                            if chunk.choices[0].delta.content:
+                                content = chunk.choices[0].delta.content
+                                full_response += content
+                                if stream_callback:
+                                    stream_callback(content)
+                        
+                        return full_response
+                    else:
+                        response = client.chat.completions.create(
+                            model=model,
+                            messages=[
+                                {"role": "user", "content": prompt}
+                            ],
+                            temperature=temperature,
+                            max_tokens=max_tokens
+                        )
+                        return response.choices[0].message.content
+                
+                else:
+                    response = zhipuai.model_api.invoke(
+                        model=model,
+                        prompt=[
+                            {"role": "user", "content": prompt}
+                        ],
+                        temperature=temperature,
+                        max_tokens=max_tokens
+                    )
+                    
+                    if isinstance(response, dict):
+                        if 'data' in response and 'choices' in response['data']:
+                            return response['data']['choices'][0]['content']
+                        elif 'choices' in response:
+                            return response['choices'][0]['content']
+                        elif 'data' in response:
+                            return response['data']
+                    
+                    return str(response)
+                    
+            except ImportError:
+                self.logger.error("智谱AI库未安装")
+                return None
+            except Exception as api_error:
+                self.logger.error(f"智谱AI API调用错误: {api_error}")
+                return None
+            
+        except Exception as e:
+            self.logger.error(f"智谱AI API调用失败: {e}")
+            return None
+    
+    def _advanced_rule_based_analysis(self, analysis_data, market=None):
+        """高级规则分析（AI不可用时的备选方案）"""
+        try:
+            scores = analysis_data.get('scores', {})
+            comprehensive_score = scores.get('comprehensive', 50)
+            technical_score = scores.get('technical', 50)
+            fundamental_score = scores.get('fundamental', 50)
+            sentiment_score = scores.get('sentiment', 50)
+            
+            analysis = f"""📊 **基于规则的深度分析报告**
+
+**综合评估：**
+- 综合得分：{comprehensive_score:.1f}/100
+- 技术面得分：{technical_score:.1f}/100
+- 基本面得分：{fundamental_score:.1f}/100
+- 情绪面得分：{sentiment_score:.1f}/100
+
+**分析结论：**
+"""
+            
+            if comprehensive_score >= 70:
+                analysis += "📈 **投资建议：买入**\n该股票综合表现优秀，各项指标均显示积极信号。"
+            elif comprehensive_score >= 60:
+                analysis += "🔄 **投资建议：持有**\n该股票表现良好，建议继续观察。"
+            elif comprehensive_score >= 40:
+                analysis += "⚠️ **投资建议：观望**\n该股票表现中性，建议谨慎观察市场变化。"
+            else:
+                analysis += "📉 **投资建议：谨慎**\n该股票表现较弱，建议降低仓位或考虑其他投资机会。"
+            
+            if market:
+                analysis += f"\n\n**市场特点：**\n该股票属于{market.upper()}市场，请注意相应的交易时间、汇率风险和监管环境。"
+            
+            return analysis
+            
+        except Exception as e:
+            self.logger.error(f"规则分析失败: {e}")
+            return "分析数据不足，建议人工审核。"
     
     def analyze_stock(self, stock_code, enable_streaming=False, stream_callback=None):
         """分析股票的主方法"""
