@@ -204,7 +204,10 @@ class NewsDataFetcher:
                             '换手率': float(stock_row.get('换手率', 0))
                         }
             except Exception as e:
-                self.logger.warning(f"获取港股市场信息失败: {e}")
+                if "RemoteDisconnected" in str(e) or "Connection aborted" in str(e):
+                    self.logger.debug(f"港股市场信息网络连接异常，继续处理其他数据")
+                else:
+                    self.logger.warning(f"获取港股市场信息失败: {e}")
                 
         except Exception as e:
             self.logger.error(f"获取港股 {stock_code} 新闻数据失败: {e}")
