@@ -535,22 +535,73 @@ class EnhancedWebStockAnalyzer:
     # 继续添加其他分析方法...
     # 这里省略了AI流式输出等方法，需要从原文件复制过来
     
-    def validate_stock_code(self, stock_code: str) -> Dict[str, Any]:
-        """验证股票代码"""
+    def validate_stock_code(self, stock_code: str) -> Tuple[bool, str]:
+        """验证股票代码格式（Flask服务器兼容格式）- 基于validate_stock_code_detailed实现"""
+        detailed_result = self.validate_stock_code_detailed(stock_code)
+        
+        if detailed_result['valid']:
+            market = detailed_result['market']
+            return True, f"有效的{market.upper()}股票代码"
+        else:
+            return False, detailed_result.get('error', '股票代码验证失败')
+    
+    def validate_stock_code_detailed(self, stock_code: str) -> Dict[str, Any]:
+        """验证股票代码（详细信息格式）"""
         try:
-            normalized_code, market = self.normalize_stock_code(stock_code)
-            market_info = MarketUtils.get_market_info(market)
+            # 对原始输入进行严格验证
+            import re
+            stock_code_clean = stock_code.strip().upper()
             
+            # A股验证：必须是6位数字
+            if re.match(r'^\d{6}$', stock_code_clean):
+                if not self.market_config.get('a_stock', {}).get('enabled', True):
+                    return {'valid': False, 'error': '市场 A_STOCK 未启用'}
+                
+                market_info = MarketUtils.get_market_info('a_stock')
+                return {
+                    'valid': True,
+                    'normalized_code': stock_code_clean,
+                    'market': 'a_stock',
+                    'market_info': market_info
+                }
+            
+            # 港股验证：5位数字，且以特定数字开头
+            if re.match(r'^\d{5}$', stock_code_clean):
+                if stock_code_clean.startswith(('0', '1', '2', '3', '6', '8', '9')):
+                    if not self.market_config.get('hk_stock', {}).get('enabled', True):
+                        return {'valid': False, 'error': '市场 HK_STOCK 未启用'}
+                    
+                    market_info = MarketUtils.get_market_info('hk_stock')
+                    return {
+                        'valid': True,
+                        'normalized_code': stock_code_clean,
+                        'market': 'hk_stock',
+                        'market_info': market_info
+                    }
+            
+            # 美股验证：1-5位字母，非纯数字
+            if re.match(r'^[A-Z]{1,5}$', stock_code_clean) and not stock_code_clean.isdigit():
+                if not self.market_config.get('us_stock', {}).get('enabled', True):
+                    return {'valid': False, 'error': '市场 US_STOCK 未启用'}
+                
+                market_info = MarketUtils.get_market_info('us_stock')
+                return {
+                    'valid': True,
+                    'normalized_code': stock_code_clean,
+                    'market': 'us_stock',
+                    'market_info': market_info
+                }
+            
+            # 如果都不匹配，返回格式错误
             return {
-                'valid': True,
-                'normalized_code': normalized_code,
-                'market': market,
-                'market_info': market_info
+                'valid': False,
+                'error': '股票代码格式不正确。A股需6位数字，港股需5位数字，美股需1-5位字母'
             }
+            
         except Exception as e:
             return {
                 'valid': False,
-                'error': str(e)
+                'error': f'代码验证失败: {str(e)}'
             }
     
     def get_market_status(self) -> Dict[str, Any]:
@@ -560,6 +611,214 @@ class EnhancedWebStockAnalyzer:
             'timestamp': datetime.now().isoformat(),
             'system_ready': True
         }
+    
+    def get_supported_markets(self) -> List[Dict[str, Any]]:
+        """获取支持的市场列表"""
+        supported_markets = []
+        for market, config in self.market_config.items():
+            if config.get('enabled', True):
+                market_info = {
+                    'market': market,
+                    'name': market.upper().replace('_', ''),
+                    'currency': config.get('currency', 'CNY'),
+                    'timezone': config.get('timezone', 'Asia/Shanghai'),
+                    'trading_hours': config.get('trading_hours', '09:30-15:00')
+                }
+                supported_markets.append(market_info)
+        
+        return supported_markets
+    
+    def get_stock_name(self, stock_code: str) -> str:
+        """获取股票名称（支持多市场）"""
+        try:
+            stock_code, market = self.normalize_stock_code(stock_code)
+            
+            import akshare as ak
+            
+            if market == 'a_stock':
+                try:
+                    stock_info = ak.stock_individual_info_em(symbol=stock_code)
+                    if not stock_info.empty:
+                        info_dict = dict(zip(stock_info['item'], stock_info['value']))
+                        stock_name = info_dict.get('股票简称', stock_code)
+                        if stock_name and stock_name != stock_code:
+                            return stock_name
+                except Exception as e:
+                    self.logger.warning(f"获取A股名称失败: {e}")
+            
+            elif market == 'hk_stock':
+                try:
+                    hk_info = ak.stock_hk_spot_em()
+                    stock_info = hk_info[hk_info['代码'] == stock_code]
+                    if not stock_info.empty:
+                        return stock_info['名称'].iloc[0]
+                except Exception as e:
+                    self.logger.warning(f"获取港股名称失败: {e}")
+            
+            elif market == 'us_stock':
+                try:
+                    us_info = ak.stock_us_spot_em()
+                    stock_info = us_info[us_info['代码'] == stock_code.upper()]
+                    if not stock_info.empty:
+                        return stock_info['名称'].iloc[0]
+                except Exception as e:
+                    self.logger.warning(f"获取美股名称失败: {e}")
+            
+            return f"{market.upper()}_{stock_code}"
+            
+        except Exception as e:
+            self.logger.warning(f"获取股票名称时出错: {e}")
+            return stock_code
+    
+    def get_price_info(self, price_data):
+        """从价格数据中提取关键信息"""
+        if price_data is None or price_data.empty or 'close' not in price_data.columns:
+            return {
+                'current_price': 0.0,
+                'price_change': 0.0,
+                'volume_ratio': 1.0,
+                'volatility': 0.0
+            }
+        
+        try:
+            latest = price_data.iloc[-1]
+            current_price = float(latest['close'])
+            
+            if len(price_data) > 1:
+                prev_price = float(price_data.iloc[-2]['close'])
+                price_change = ((current_price - prev_price) / prev_price) * 100
+            else:
+                price_change = 0.0
+                
+            return {
+                'current_price': current_price,
+                'price_change': price_change,
+                'volume_ratio': 1.0,
+                'volatility': abs(price_change)
+            }
+        except Exception as e:
+            self.logger.error(f"计算价格信息失败: {e}")
+            return {'current_price': 0.0, 'price_change': 0.0, 'volume_ratio': 1.0, 'volatility': 0.0}
+    
+    def calculate_technical_score(self, technical_analysis):
+        """计算技术分析得分"""
+        if not technical_analysis:
+            return 50
+        
+        score = 50
+        indicators = technical_analysis.get('indicators', {})
+        
+        # RSI评分
+        if 'RSI' in indicators:
+            rsi = indicators['RSI']
+            if 30 <= rsi <= 70:
+                score += 10
+            elif rsi < 30:
+                score += 20  # 超卖，可能反弹
+            elif rsi > 70:
+                score -= 20  # 超买，可能回调
+        
+        return max(0, min(100, score))
+    
+    def calculate_fundamental_score(self, fundamental_data):
+        """计算基本面得分"""
+        if not fundamental_data:
+            return 50
+        return 60  # 简化实现，实际应根据财务指标计算
+    
+    def calculate_advanced_sentiment_analysis(self, news_data):
+        """计算高级情绪分析"""
+        return self.news_fetcher.analyze_sentiment(news_data)
+    
+    def calculate_sentiment_score(self, sentiment_analysis):
+        """计算情绪分析得分"""
+        if not sentiment_analysis:
+            return 50
+        
+        overall_sentiment = sentiment_analysis.get('overall_sentiment', 0.0)
+        score = 50 + (overall_sentiment * 30)  # 转换到0-100范围
+        return max(0, min(100, score))
+    
+    def calculate_comprehensive_score(self, scores):
+        """计算综合得分"""
+        weights = self.analysis_weights
+        technical_score = scores.get('technical', 50)
+        fundamental_score = scores.get('fundamental', 50) 
+        sentiment_score = scores.get('sentiment', 50)
+        
+        comprehensive = (
+            technical_score * weights['technical'] +
+            fundamental_score * weights['fundamental'] +
+            sentiment_score * weights['sentiment']
+        )
+        
+        return max(0, min(100, comprehensive))
+    
+    def generate_recommendation(self, scores, market=None):
+        """生成投资建议"""
+        comprehensive_score = scores.get('comprehensive', 50)
+        
+        if comprehensive_score >= 70:
+            return "买入"
+        elif comprehensive_score >= 60:
+            return "持有"
+        elif comprehensive_score <= 40:
+            return "卖出"
+        else:
+            return "观望"
+    
+    def generate_ai_analysis(self, analysis_data):
+        """生成AI分析（简化版）"""
+        return "AI分析功能需要配置API密钥"
+    
+    def analyze_stock(self, stock_code, enable_streaming=False, stream_callback=None):
+        """分析股票的主方法"""
+        try:
+            # 标准化股票代码
+            normalized_code, market = self.normalize_stock_code(stock_code)
+            
+            # 获取价格数据
+            price_data = self.get_stock_data(normalized_code)
+            if price_data is None:
+                return {"error": "无法获取价格数据"}
+            
+            # 计算技术指标
+            technical_analysis = self.calculate_technical_indicators(price_data)
+            
+            # 计算各项得分
+            technical_score = self.calculate_technical_score(technical_analysis)
+            fundamental_data = self.get_comprehensive_fundamental_data(normalized_code)
+            fundamental_score = self.calculate_fundamental_score(fundamental_data)
+            
+            news_data = self.get_comprehensive_news_data(normalized_code)
+            sentiment_analysis = self.calculate_advanced_sentiment_analysis(news_data)
+            sentiment_score = self.calculate_sentiment_score(sentiment_analysis)
+            
+            scores = {
+                'technical': technical_score,
+                'fundamental': fundamental_score,
+                'sentiment': sentiment_score
+            }
+            scores['comprehensive'] = self.calculate_comprehensive_score(scores)
+            
+            # 生成建议
+            recommendation = self.generate_recommendation(scores, market)
+            
+            return {
+                'stock_code': normalized_code,
+                'market': market,
+                'scores': scores,
+                'recommendation': recommendation,
+                'price_info': self.get_price_info(price_data),
+                'technical_analysis': technical_analysis,
+                'fundamental_data': fundamental_data,
+                'news_data': news_data,
+                'sentiment_analysis': sentiment_analysis
+            }
+            
+        except Exception as e:
+            self.logger.error(f"股票分析失败: {e}")
+            return {"error": str(e)}
 
 # 为了保持向后兼容性，保留一些旧的方法名
 class EnhancedWebStockAnalyzerLegacy(EnhancedWebStockAnalyzer):

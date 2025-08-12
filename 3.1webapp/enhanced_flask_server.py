@@ -25,10 +25,10 @@ from queue import Queue, Empty
 
 # 导入我们的分析器
 try:
-    from enhanced_web_stock_analyzer import EnhancedWebStockAnalyzer
+    from enhanced_web_stock_analyzer_refactored import EnhancedWebStockAnalyzer
 except ImportError:
-    print("❌ 无法导入 enhanced_web_stock_analyzer.py")
-    print("请确保 enhanced_web_stock_analyzer.py 文件存在于同一目录下")
+    print("❌ 无法导入 enhanced_web_stock_analyzer_refactored.py")
+    print("请确保 enhanced_web_stock_analyzer_refactored.py 文件存在于同一目录下")
     sys.exit(1)
 
 # 创建Flask应用
@@ -2260,7 +2260,7 @@ ${status} ${api}: ${version}`;
 
 📁 相关文件：
 • 配置文件：config.json
-• 分析器：enhanced_web_stock_analyzer.py (多市场版)
+• 分析器：enhanced_web_stock_analyzer_refactored.py (多市场版-重构)
 • 服务器：enhanced_flask_web_server.py (全球版)`;
 
                         alert(configInfo);
