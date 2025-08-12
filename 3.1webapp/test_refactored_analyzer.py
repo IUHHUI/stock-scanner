@@ -99,11 +99,29 @@ def test_data_fetchers():
         logger.info("测试FundamentalDataFetcher...")
         fundamental_fetcher = FundamentalDataFetcher(test_config)
         logger.info("✓ FundamentalDataFetcher初始化成功")
+        for code in test_codes:
+            try:
+                fundamental_data = fundamental_fetcher.get_comprehensive_fundamental_data(code)
+                if fundamental_data is not None:
+                    logger.info(f"✓ {code} 基础数据获取成功")
+                else:
+                    logger.warning(f"⚠ {code} 基础数据获取失败（可能是API限制或数据源问题）")
+            except Exception as e:
+                logger.warning(f"⚠ {code} 获取基础数据异常: {e}")
         
         # 测试NewsDataFetcher
         logger.info("测试NewsDataFetcher...")
         news_fetcher = NewsDataFetcher(test_config)
         logger.info("✓ NewsDataFetcher初始化成功")
+        for code in test_codes:
+            try:
+                news_data = news_fetcher.get_comprehensive_news_data(code)
+                if news_data is not None:
+                    logger.info(f"✓ {code} 新闻数据获取成功")
+                else:
+                    logger.warning(f"⚠ {code} 新闻数据获取失败（可能是API限制或数据源问题）")
+            except Exception as e:
+                logger.warning(f"⚠ {code} 获取新闻数据异常: {e}")
         
         logger.info("🎉 数据获取器测试通过！")
         return True

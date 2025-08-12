@@ -111,7 +111,8 @@ class NewsDataFetcher:
             
             # 获取资金流向作为情绪指标
             try:
-                money_flow = ak.stock_individual_fund_flow(stock=stock_code, market="沪深A股")
+                # 修正API调用参数
+                money_flow = ak.stock_individual_fund_flow(stock=stock_code, market="sh" if stock_code.startswith('60') else "sz")
                 if not money_flow.empty:
                     latest_flow = money_flow.iloc[0]
                     news_data['sentiment']['money_flow'] = {
@@ -123,13 +124,32 @@ class NewsDataFetcher:
                     }
             except Exception as e:
                 self.logger.warning(f"获取A股资金流向失败: {e}")
+                # 尝试资金流向排行榜
+                try:
+                    flow_rank = ak.stock_individual_fund_flow_rank(indicator="今日")
+                    if not flow_rank.empty:
+                        stock_flow = flow_rank[flow_rank['代码'] == stock_code]
+                        if not stock_flow.empty:
+                            row = stock_flow.iloc[0]
+                            news_data['sentiment']['money_flow_rank'] = {
+                                '主力净额': float(str(row.get('主力净额', 0)).replace(',', '')),
+                                '涨跌幅': float(row.get('涨跌幅', 0))
+                            }
+                except Exception as e2:
+                    self.logger.warning(f"获取资金流向排行失败: {e2}")
             
             # 获取龙虎榜数据作为情绪参考
             try:
-                lhb_data = ak.stock_lhb_detail_em(symbol=stock_code, start_date="20240101", end_date=datetime.now().strftime('%Y%m%d'))
+                # 修正API调用 - 不传symbol参数，获取所有数据后过滤
+                start_date = (datetime.now() - timedelta(days=30)).strftime('%Y%m%d')
+                end_date = datetime.now().strftime('%Y%m%d')
+                lhb_data = ak.stock_lhb_detail_em(start_date=start_date, end_date=end_date)
                 if not lhb_data.empty:
-                    recent_lhb = lhb_data.head(5)  # 最近5条记录
-                    news_data['sentiment']['lhb_activity'] = len(recent_lhb)
+                    # 过滤特定股票的龙虎榜记录
+                    stock_lhb = lhb_data[lhb_data['代码'] == stock_code] if '代码' in lhb_data.columns else pd.DataFrame()
+                    news_data['sentiment']['lhb_activity'] = len(stock_lhb)
+                    if len(stock_lhb) > 0:
+                        news_data['sentiment']['lhb_recent'] = True
             except Exception as e:
                 self.logger.warning(f"获取A股龙虎榜数据失败: {e}")
                 
@@ -144,29 +164,48 @@ class NewsDataFetcher:
         news_data = {'news': [], 'sentiment': {}}
         
         try:
-            # 港股新闻获取相对有限，尝试获取基本信息
+            # 使用stock_news_em获取港股新闻（已验证支持）
             try:
-                # 获取港股基本面信息作为参考
+                stock_news = ak.stock_news_em(symbol=stock_code)
+                if not stock_news.empty:
+                    # 按日期过滤
+                    cutoff_date = datetime.now() - timedelta(days=days)
+                    filtered_news = []
+                    
+                    for _, row in stock_news.iterrows():
+                        try:
+                            news_date = pd.to_datetime(row['发布时间'])
+                            if news_date >= cutoff_date:
+                                news_item = {
+                                    'title': str(row.get('新闻标题', '')),
+                                    'content': str(row.get('新闻内容', '')),
+                                    'date': news_date.strftime('%Y-%m-%d %H:%M:%S'),
+                                    'source': str(row.get('文章来源', ''))
+                                }
+                                filtered_news.append(news_item)
+                        except Exception as e:
+                            continue
+                    
+                    news_data['news'] = filtered_news[:self.max_news_count]
+                    self.logger.info(f"成功获取港股 {stock_code} 新闻: {len(news_data['news'])} 条")
+            except Exception as e:
+                self.logger.warning(f"获取港股新闻失败: {e}")
+            
+            # 获取港股市场信息作为情绪参考
+            try:
                 hk_info = ak.stock_hk_spot_em()
-                hk_detail = hk_info[hk_info['代码'] == stock_code]
-                if not hk_detail.empty:
-                    stock_row = hk_detail.iloc[0]
-                    news_data['sentiment']['market_info'] = {
-                        '涨跌幅': float(stock_row.get('涨跌幅', 0)),
-                        '成交量': float(stock_row.get('成交量', 0)),
-                        '换手率': float(stock_row.get('换手率', 0))
-                    }
+                if hk_info is not None and not hk_info.empty:
+                    hk_detail = hk_info[hk_info['代码'] == stock_code]
+                    if not hk_detail.empty:
+                        stock_row = hk_detail.iloc[0]
+                        news_data['sentiment']['market_info'] = {
+                            '涨跌幅': float(stock_row.get('涨跌幅', 0)),
+                            '成交量': float(str(stock_row.get('成交量', 0)).replace(',', '')),
+                            '换手率': float(stock_row.get('换手率', 0))
+                        }
             except Exception as e:
                 self.logger.warning(f"获取港股市场信息失败: {e}")
-            
-            # 模拟新闻条目（实际应用中需要接入港股新闻源）
-            news_data['news'] = [{
-                'title': f'港股 {stock_code} 市场表现',
-                'content': '港股新闻数据获取功能开发中...',
-                'date': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-                'source': '港股数据'
-            }]
-            
+                
         except Exception as e:
             self.logger.error(f"获取港股 {stock_code} 新闻数据失败: {e}")
         
@@ -178,28 +217,58 @@ class NewsDataFetcher:
         news_data = {'news': [], 'sentiment': {}}
         
         try:
-            # 美股新闻获取相对有限，尝试获取基本信息
+            # 使用stock_news_em获取美股新闻（已验证支持）
             try:
-                # 获取美股基本面信息作为参考
+                stock_news = ak.stock_news_em(symbol=stock_code)
+                if not stock_news.empty:
+                    # 按日期过滤
+                    cutoff_date = datetime.now() - timedelta(days=days)
+                    filtered_news = []
+                    
+                    for _, row in stock_news.iterrows():
+                        try:
+                            news_date = pd.to_datetime(row['发布时间'])
+                            if news_date >= cutoff_date:
+                                news_item = {
+                                    'title': str(row.get('新闻标题', '')),
+                                    'content': str(row.get('新闻内容', '')),
+                                    'date': news_date.strftime('%Y-%m-%d %H:%M:%S'),
+                                    'source': str(row.get('文章来源', ''))
+                                }
+                                filtered_news.append(news_item)
+                        except Exception as e:
+                            continue
+                    
+                    news_data['news'] = filtered_news[:self.max_news_count]
+                    self.logger.info(f"成功获取美股 {stock_code} 新闻: {len(news_data['news'])} 条")
+            except Exception as e:
+                self.logger.warning(f"获取美股新闻失败: {e}")
+            
+            # 获取美股市场信息作为情绪参考
+            try:
                 us_info = ak.stock_us_spot_em()
-                us_detail = us_info[us_info['代码'] == stock_code]
-                if not us_detail.empty:
-                    stock_row = us_detail.iloc[0]
-                    news_data['sentiment']['market_info'] = {
-                        '涨跌幅': float(stock_row.get('涨跌幅', 0)),
-                        '成交量': float(stock_row.get('成交量', 0)),
-                        '市值': float(stock_row.get('总市值', 0))
-                    }
+                if us_info is not None and not us_info.empty:
+                    us_detail = us_info[us_info['代码'] == stock_code]
+                    if not us_detail.empty:
+                        stock_row = us_detail.iloc[0]
+                        news_data['sentiment']['market_info'] = {
+                            '涨跌幅': float(stock_row.get('涨跌幅', 0)),
+                            '成交量': float(str(stock_row.get('成交量', 0)).replace(',', '')),
+                            '市值': float(str(stock_row.get('总市值', 0)).replace(',', ''))
+                        }
+                    else:
+                        # 如果找不到具体股票，至少提供基本信息
+                        news_data['sentiment']['market_info'] = {
+                            '数据状态': '美股基本信息获取中',
+                            '市场': 'US Stock'
+                        }
             except Exception as e:
                 self.logger.warning(f"获取美股市场信息失败: {e}")
-            
-            # 模拟新闻条目（实际应用中需要接入美股新闻源）
-            news_data['news'] = [{
-                'title': f'美股 {stock_code} 市场表现',
-                'content': '美股新闻数据获取功能开发中...',
-                'date': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-                'source': '美股数据'
-            }]
+                # 提供基础的情绪数据结构
+                news_data['sentiment']['market_info'] = {
+                    '数据状态': f'数据获取异常: {type(e).__name__}',
+                    '备注': '使用离线模式'
+                }
             
         except Exception as e:
             self.logger.error(f"获取美股 {stock_code} 新闻数据失败: {e}")

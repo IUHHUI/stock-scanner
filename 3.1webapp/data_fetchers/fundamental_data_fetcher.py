@@ -93,16 +93,28 @@ class FundamentalDataFetcher:
             except Exception as e:
                 self.logger.warning(f"获取A股个股信息失败: {e}")
             
-            # 获取财务指标
+            # 获取财务指标 - 使用可用的API
             try:
-                financial_data = ak.stock_financial_em(stock=stock_code)
+                financial_data = ak.stock_financial_abstract(symbol=stock_code)
                 if not financial_data.empty:
                     latest_financial = financial_data.iloc[0]
                     for col in financial_data.columns:
-                        if col != '股票代码':
+                        if col not in ['股票代码', 'symbol']:
                             fundamental_data[f"财务_{col}"] = latest_financial[col]
             except Exception as e:
                 self.logger.warning(f"获取A股财务指标失败: {e}")
+                
+            # 尝试同花顺财务数据
+            try:
+                ths_data = ak.stock_zyjs_ths(symbol=stock_code)
+                if not ths_data.empty:
+                    for _, row in ths_data.iterrows():
+                        key = str(row.get('item', row.get('指标', ''))).strip()
+                        value = str(row.get('value', row.get('值', ''))).strip()
+                        if key and value:
+                            fundamental_data[f"同花顺_{key}"] = value
+            except Exception as e:
+                self.logger.warning(f"获取同花顺财务数据失败: {e}")
             
             # 获取主要财务指标
             try:
@@ -117,10 +129,14 @@ class FundamentalDataFetcher:
             
             # 获取估值指标
             try:
-                valuation_data = ak.stock_a_ttm_lyr(symbol=stock_code)
+                valuation_data = ak.stock_a_ttm_lyr()
                 if not valuation_data.empty:
-                    for _, row in valuation_data.iterrows():
-                        fundamental_data[f"估值_{row['指标']}"] = row['数值']
+                    # 查找对应股票的数据
+                    stock_data = valuation_data[valuation_data['股票代码'] == stock_code]
+                    if not stock_data.empty:
+                        for col in stock_data.columns:
+                            if col != '股票代码':
+                                fundamental_data[f"估值_{col}"] = stock_data.iloc[0][col]
             except Exception as e:
                 self.logger.warning(f"获取A股估值指标失败: {e}")
                 
@@ -153,13 +169,30 @@ class FundamentalDataFetcher:
             
             # 获取港股财务数据（如果可用）
             try:
-                # 尝试获取港股的财务报表数据
+                # 尝试获取港股的估值数据
                 financial_data = ak.stock_hk_valuation_baidu(symbol=stock_code, indicator="市盈率")
-                if not financial_data.empty:
+                if financial_data is not None and not financial_data.empty:
                     for col in financial_data.columns:
                         fundamental_data[f"港股_{col}"] = financial_data.iloc[-1][col]
             except Exception as e:
                 self.logger.warning(f"获取港股财务数据失败: {e}")
+                
+            # 尝试其他港股数据源
+            try:
+                # 使用港股实时数据获取一些基本信息
+                hk_spot = ak.stock_hk_spot_em()
+                if hk_spot is not None and not hk_spot.empty:
+                    hk_info = hk_spot[hk_spot['代码'] == stock_code]
+                    if not hk_info.empty:
+                        row = hk_info.iloc[0]
+                        fundamental_data.update({
+                            '港股_当前价格': row.get('最新价', 0),
+                            '港股_市值': row.get('总市值', 0),
+                            '港股_市盈率': row.get('市盈率', 0),
+                            '港股_成交量': row.get('成交量', 0)
+                        })
+            except Exception as e:
+                self.logger.warning(f"获取港股实时数据失败: {e}")
                 
         except Exception as e:
             self.logger.error(f"获取港股 {stock_code} 基本面数据失败: {e}")
@@ -190,14 +223,24 @@ class FundamentalDataFetcher:
             
             # 获取美股财务指标
             try:
-                # 尝试获取美股的基本面数据
-                financial_data = ak.stock_us_fundamental(symbol=stock_code)
-                if not financial_data.empty:
-                    latest_data = financial_data.iloc[-1]
-                    for col in financial_data.columns:
-                        fundamental_data[f"美股_{col}"] = latest_data[col]
+                # 使用美股实时数据获取基本信息
+                us_spot = ak.stock_us_spot_em()
+                if us_spot is not None and not us_spot.empty:
+                    us_info = us_spot[us_spot['代码'] == stock_code]
+                    if not us_info.empty:
+                        row = us_info.iloc[0]
+                        fundamental_data.update({
+                            '美股_当前价格': row.get('最新价', 0),
+                            '美股_市值': row.get('总市值', 0),
+                            '美股_市盈率': row.get('市盈率', 0),
+                            '美股_成交量': row.get('成交量', 0),
+                            '美股_成交额': row.get('成交额', 0)
+                        })
             except Exception as e:
                 self.logger.warning(f"获取美股财务指标失败: {e}")
+                
+            # 注意：akshare当前版本没有stock_us_fundamental接口
+            # 如果需要详细财务数据，需要考虑其他数据源
                 
         except Exception as e:
             self.logger.error(f"获取美股 {stock_code} 基本面数据失败: {e}")
