@@ -10,6 +10,13 @@ from datetime import datetime, timedelta
 from typing import Dict, List, Any, Optional
 from .base import BasePriceDataSource, BaseFundamentalDataSource, BaseNewsDataSource, DataSourceError
 
+try:
+    import akshare as ak
+    AKSHARE_AVAILABLE = True
+except ImportError:
+    ak = None
+    AKSHARE_AVAILABLE = False
+
 
 class AkSharePriceDataSource(BasePriceDataSource):
     """AkShare价格数据源"""
@@ -20,26 +27,25 @@ class AkSharePriceDataSource(BasePriceDataSource):
     
     def get_stock_data(self, stock_code: str, market: str, period: str = '1y') -> Optional[pd.DataFrame]:
         """获取股票价格数据"""
-        try:
-            import akshare as ak
+        if not AKSHARE_AVAILABLE:
+            self.logger.error("akshare库未安装")
+            return None
             
+        try:
             if market == 'a_stock':
-                return self._get_a_stock_data(ak, stock_code, period)
+                return self._get_a_stock_data(stock_code, period)
             elif market == 'hk_stock':
-                return self._get_hk_stock_data(ak, stock_code, period)
+                return self._get_hk_stock_data(stock_code, period)
             elif market == 'us_stock':
-                return self._get_us_stock_data(ak, stock_code, period)
+                return self._get_us_stock_data(stock_code, period)
             else:
                 raise DataSourceError(f"不支持的市场类型: {market}")
                 
-        except ImportError:
-            self.logger.error("akshare库未安装")
-            return None
         except Exception as e:
             self.logger.error(f"获取{market} {stock_code}价格数据失败: {e}")
             return None
     
-    def _get_a_stock_data(self, ak, stock_code: str, period: str) -> Optional[pd.DataFrame]:
+    def _get_a_stock_data(self, stock_code: str, period: str) -> Optional[pd.DataFrame]:
         """获取A股数据"""
         try:
             days = self._parse_period(period)
@@ -62,7 +68,7 @@ class AkSharePriceDataSource(BasePriceDataSource):
             self.logger.error(f"获取A股{stock_code}数据失败: {e}")
             return None
     
-    def _get_hk_stock_data(self, ak, stock_code: str, period: str) -> Optional[pd.DataFrame]:
+    def _get_hk_stock_data(self, stock_code: str, period: str) -> Optional[pd.DataFrame]:
         """获取港股数据"""
         try:
             # 港股历史数据接口
@@ -102,7 +108,7 @@ class AkSharePriceDataSource(BasePriceDataSource):
             self.logger.error(f"获取港股{stock_code}数据失败: {e}")
             return None
     
-    def _get_us_stock_data(self, ak, stock_code: str, period: str) -> Optional[pd.DataFrame]:
+    def _get_us_stock_data(self, stock_code: str, period: str) -> Optional[pd.DataFrame]:
         """获取美股数据"""
         try:
             days = self._parse_period(period)
@@ -244,15 +250,17 @@ class AkSharePriceDataSource(BasePriceDataSource):
     
     def get_realtime_price(self, stock_code: str, market: str) -> Optional[Dict[str, Any]]:
         """获取实时价格"""
-        try:
-            import akshare as ak
+        if not AKSHARE_AVAILABLE:
+            self.logger.error("akshare库未安装")
+            return None
             
+        try:
             if market == 'a_stock':
-                return self._get_a_stock_realtime(ak, stock_code)
+                return self._get_a_stock_realtime(stock_code)
             elif market == 'hk_stock':
-                return self._get_hk_stock_realtime(ak, stock_code)
+                return self._get_hk_stock_realtime(stock_code)
             elif market == 'us_stock':
-                return self._get_us_stock_realtime(ak, stock_code)
+                return self._get_us_stock_realtime(stock_code)
             else:
                 return None
                 
@@ -260,7 +268,7 @@ class AkSharePriceDataSource(BasePriceDataSource):
             self.logger.error(f"获取{market} {stock_code}实时价格失败: {e}")
             return None
     
-    def _get_a_stock_realtime(self, ak, stock_code: str) -> Optional[Dict[str, Any]]:
+    def _get_a_stock_realtime(self, stock_code: str) -> Optional[Dict[str, Any]]:
         """获取A股实时价格"""
         try:
             data = ak.stock_zh_a_spot_em()
@@ -279,7 +287,7 @@ class AkSharePriceDataSource(BasePriceDataSource):
             self.logger.debug(f"获取A股实时价格失败: {e}")
             return None
     
-    def _get_hk_stock_realtime(self, ak, stock_code: str) -> Optional[Dict[str, Any]]:
+    def _get_hk_stock_realtime(self, stock_code: str) -> Optional[Dict[str, Any]]:
         """获取港股实时价格"""
         try:
             data = ak.stock_hk_spot_em()
@@ -298,7 +306,7 @@ class AkSharePriceDataSource(BasePriceDataSource):
             self.logger.debug(f"获取港股实时价格失败: {e}")
             return None
     
-    def _get_us_stock_realtime(self, ak, stock_code: str) -> Optional[Dict[str, Any]]:
+    def _get_us_stock_realtime(self, stock_code: str) -> Optional[Dict[str, Any]]:
         """获取美股实时价格"""
         try:
             data = ak.stock_us_spot_em()
@@ -319,11 +327,7 @@ class AkSharePriceDataSource(BasePriceDataSource):
     
     def is_available(self) -> bool:
         """检查数据源是否可用"""
-        try:
-            import akshare as ak
-            return True
-        except ImportError:
-            return False
+        return AKSHARE_AVAILABLE
 
 
 class AkShareFundamentalDataSource(BaseFundamentalDataSource):
@@ -335,26 +339,25 @@ class AkShareFundamentalDataSource(BaseFundamentalDataSource):
     
     def get_stock_info(self, stock_code: str, market: str) -> Dict[str, Any]:
         """获取股票基本信息"""
-        try:
-            import akshare as ak
+        if not AKSHARE_AVAILABLE:
+            self.logger.error("akshare库未安装")
+            return self._get_default_info(stock_code, market)
             
+        try:
             if market == 'a_stock':
-                return self._get_a_stock_info(ak, stock_code)
+                return self._get_a_stock_info(stock_code)
             elif market == 'hk_stock':
-                return self._get_hk_stock_info(ak, stock_code)
+                return self._get_hk_stock_info(stock_code)
             elif market == 'us_stock':
-                return self._get_us_stock_info(ak, stock_code)
+                return self._get_us_stock_info(stock_code)
             else:
                 return self._get_default_info(stock_code, market)
                 
-        except ImportError:
-            self.logger.error("akshare库未安装")
-            return self._get_default_info(stock_code, market)
         except Exception as e:
             self.logger.error(f"获取{market} {stock_code}基本信息失败: {e}")
             return self._get_default_info(stock_code, market)
     
-    def _get_a_stock_info(self, ak, stock_code: str) -> Dict[str, Any]:
+    def _get_a_stock_info(self, stock_code: str) -> Dict[str, Any]:
         """获取A股基本信息"""
         info = {}
         try:
@@ -369,7 +372,7 @@ class AkShareFundamentalDataSource(BaseFundamentalDataSource):
         
         return info if info else self._get_default_info(stock_code, 'a_stock')
     
-    def _get_hk_stock_info(self, ak, stock_code: str) -> Dict[str, Any]:
+    def _get_hk_stock_info(self, stock_code: str) -> Dict[str, Any]:
         """获取港股基本信息"""
         info = {}
         
@@ -423,7 +426,7 @@ class AkShareFundamentalDataSource(BaseFundamentalDataSource):
         # 如果所有方法都失败，返回默认信息
         return self._get_default_info(stock_code, 'hk_stock')
     
-    def _get_us_stock_info(self, ak, stock_code: str) -> Dict[str, Any]:
+    def _get_us_stock_info(self, stock_code: str) -> Dict[str, Any]:
         """获取美股基本信息"""
         info = {}
         
@@ -486,8 +489,10 @@ class AkShareFundamentalDataSource(BaseFundamentalDataSource):
         if market != 'a_stock':
             return {}
         
+        if not AKSHARE_AVAILABLE:
+            return {}
+            
         try:
-            import akshare as ak
             indicators = {}
             
             try:
@@ -502,8 +507,6 @@ class AkShareFundamentalDataSource(BaseFundamentalDataSource):
             
             return indicators
             
-        except ImportError:
-            return {}
         except Exception as e:
             self.logger.error(f"获取财务指标失败: {e}")
             return {}
@@ -513,8 +516,10 @@ class AkShareFundamentalDataSource(BaseFundamentalDataSource):
         if market != 'a_stock':
             return {}
         
+        if not AKSHARE_AVAILABLE:
+            return {}
+            
         try:
-            import akshare as ak
             valuation = {}
             
             try:
@@ -530,19 +535,13 @@ class AkShareFundamentalDataSource(BaseFundamentalDataSource):
             
             return valuation
             
-        except ImportError:
-            return {}
         except Exception as e:
             self.logger.error(f"获取估值指标失败: {e}")
             return {}
     
     def is_available(self) -> bool:
         """检查数据源是否可用"""
-        try:
-            import akshare as ak
-            return True
-        except ImportError:
-            return False
+        return AKSHARE_AVAILABLE
 
 
 class AkShareNewsDataSource(BaseNewsDataSource):
@@ -554,26 +553,25 @@ class AkShareNewsDataSource(BaseNewsDataSource):
     
     def get_stock_news(self, stock_code: str, market: str, days: int = 15) -> List[Dict[str, Any]]:
         """获取股票相关新闻"""
-        try:
-            import akshare as ak
+        if not AKSHARE_AVAILABLE:
+            self.logger.error("akshare库未安装")
+            return []
             
+        try:
             if market == 'a_stock':
-                return self._get_a_stock_news(ak, stock_code, days)
+                return self._get_a_stock_news(stock_code, days)
             elif market == 'hk_stock':
-                return self._get_hk_stock_news(ak, stock_code, days)
+                return self._get_hk_stock_news(stock_code, days)
             elif market == 'us_stock':
-                return self._get_us_stock_news(ak, stock_code, days)
+                return self._get_us_stock_news(stock_code, days)
             else:
                 return []
                 
-        except ImportError:
-            self.logger.error("akshare库未安装")
-            return []
         except Exception as e:
             self.logger.error(f"获取{market} {stock_code}新闻失败: {e}")
             return []
     
-    def _get_a_stock_news(self, ak, stock_code: str, days: int) -> List[Dict[str, Any]]:
+    def _get_a_stock_news(self, stock_code: str, days: int) -> List[Dict[str, Any]]:
         """获取A股新闻"""
         news_list = []
         try:
@@ -594,7 +592,7 @@ class AkShareNewsDataSource(BaseNewsDataSource):
         
         return news_list
     
-    def _get_hk_stock_news(self, ak, stock_code: str, days: int) -> List[Dict[str, Any]]:
+    def _get_hk_stock_news(self, stock_code: str, days: int) -> List[Dict[str, Any]]:
         """获取港股新闻"""
         news_list = []
         try:
@@ -615,7 +613,7 @@ class AkShareNewsDataSource(BaseNewsDataSource):
         
         return news_list
     
-    def _get_us_stock_news(self, ak, stock_code: str, days: int) -> List[Dict[str, Any]]:
+    def _get_us_stock_news(self, stock_code: str, days: int) -> List[Dict[str, Any]]:
         """获取美股新闻"""
         news_list = []
         try:
@@ -638,9 +636,10 @@ class AkShareNewsDataSource(BaseNewsDataSource):
     
     def get_market_news(self, market: str, days: int = 7) -> List[Dict[str, Any]]:
         """获取市场新闻"""
-        try:
-            import akshare as ak
+        if not AKSHARE_AVAILABLE:
+            return []
             
+        try:
             # 获取市场新闻（示例实现）
             market_news = []
             return market_news
@@ -651,8 +650,4 @@ class AkShareNewsDataSource(BaseNewsDataSource):
     
     def is_available(self) -> bool:
         """检查数据源是否可用"""
-        try:
-            import akshare as ak
-            return True
-        except ImportError:
-            return False
+        return AKSHARE_AVAILABLE
