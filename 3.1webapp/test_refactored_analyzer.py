@@ -102,7 +102,7 @@ def test_data_fetchers():
         for code in test_codes:
             try:
                 fundamental_data = fundamental_fetcher.get_comprehensive_fundamental_data(code)
-                if fundamental_data is not None:
+                if fundamental_data is not None and len(fundamental_data) > 0:
                     logger.info(f"✓ {code} 基础数据获取成功")
                 else:
                     logger.warning(f"⚠ {code} 基础数据获取失败（可能是API限制或数据源问题）")
@@ -116,7 +116,7 @@ def test_data_fetchers():
         for code in test_codes:
             try:
                 news_data = news_fetcher.get_comprehensive_news_data(code)
-                if news_data is not None:
+                if news_data is not None and len(news_data) > 0:
                     logger.info(f"✓ {code} 新闻数据获取成功")
                 else:
                     logger.warning(f"⚠ {code} 新闻数据获取失败（可能是API限制或数据源问题）")

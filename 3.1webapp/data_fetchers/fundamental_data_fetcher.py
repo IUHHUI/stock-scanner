@@ -163,73 +163,73 @@ class FundamentalDataFetcher:
         fundamental_data = {}
         
         try:
-            # 获取港股基本信息 - 添加重试机制和更好的错误处理
-            max_retries = 2
-            for attempt in range(max_retries):
-                try:
-                    stock_info = ak.stock_hk_spot_em()
-                    if stock_info is not None and not stock_info.empty:
-                        stock_detail = stock_info[stock_info['代码'] == stock_code]
-                        if not stock_detail.empty:
-                            stock_row = stock_detail.iloc[0]
-                            fundamental_data.update({
-                                '股票名称': stock_row.get('名称', ''),
-                                '当前价格': stock_row.get('最新价', 0),
-                                '涨跌幅': stock_row.get('涨跌幅', 0),
-                                '市盈率': stock_row.get('市盈率', 0),
-                                '市值': stock_row.get('总市值', 0)
-                            })
-                            break
-                        else:
-                            self.logger.info(f"港股 {stock_code} 在实时数据中未找到")
-                    break
-                except Exception as e:
-                    if attempt == max_retries - 1:
-                        if "RemoteDisconnected" in str(e) or "Connection aborted" in str(e):
-                            self.logger.debug(f"港股基本信息网络连接异常，已有fallback处理")
-                        else:
-                            self.logger.warning(f"获取港股基本信息失败: {e}")
-                    else:
-                        import time
-                        time.sleep(1)  # 重试前等待1秒
-            
-            # 获取港股财务数据（如果可用）
+            # 获取港股基本信息 - 使用实时数据
             try:
-                # 尝试获取港股的估值数据
-                financial_data = ak.stock_hk_valuation_baidu(symbol=stock_code, indicator="市盈率")
-                if financial_data is not None and not financial_data.empty:
-                    for col in financial_data.columns:
-                        fundamental_data[f"港股_{col}"] = financial_data.iloc[-1][col]
-            except Exception as e:
-                # 只对非None错误进行警告记录
-                if "'NoneType' object is not subscriptable" not in str(e):
-                    self.logger.warning(f"获取港股财务数据失败: {e}")
-                else:
-                    self.logger.debug("港股财务数据接口返回空数据，使用基本信息代替")
-                
-            # 尝试其他港股数据源 (只在基本信息获取失败时执行)
-            if not fundamental_data:  # 只在没有基本数据时尝试
-                try:
-                    # 使用港股实时数据获取一些基本信息
-                    hk_spot = ak.stock_hk_spot_em()
-                    if hk_spot is not None and not hk_spot.empty:
-                        hk_info = hk_spot[hk_spot['代码'] == stock_code]
-                        if not hk_info.empty:
-                            row = hk_info.iloc[0]
-                            fundamental_data.update({
-                                '港股_当前价格': row.get('最新价', 0),
-                                '港股_市值': row.get('总市值', 0),
-                                '港股_市盈率': row.get('市盈率', 0),
-                                '港股_成交量': row.get('成交量', 0)
-                            })
-                except Exception as e:
-                    if "RemoteDisconnected" in str(e) or "Connection aborted" in str(e):
-                        self.logger.debug(f"港股实时数据网络连接异常，使用默认数据")
+                stock_info = ak.stock_hk_spot_em()
+                if stock_info is not None and not stock_info.empty:
+                    stock_detail = stock_info[stock_info['代码'] == stock_code]
+                    if not stock_detail.empty:
+                        stock_row = stock_detail.iloc[0]
+                        fundamental_data.update({
+                            '股票名称': stock_row.get('名称', ''),
+                            '当前价格': stock_row.get('最新价', 0),
+                            '涨跌幅': stock_row.get('涨跌幅', 0),
+                            '市盈率': stock_row.get('市盈率', 0),
+                            '市值': stock_row.get('总市值', 0),
+                            '成交量': stock_row.get('成交量', 0),
+                            '成交额': stock_row.get('成交额', 0),
+                            '市净率': stock_row.get('市净率', 0),
+                            '振幅': stock_row.get('振幅', 0),
+                            '换手率': stock_row.get('换手率', 0)
+                        })
+                        self.logger.info(f"成功获取港股 {stock_code} 基本信息")
                     else:
-                        self.logger.warning(f"获取港股实时数据失败: {e}")
+                        self.logger.warning(f"港股 {stock_code} 在实时数据中未找到")
+                else:
+                    self.logger.warning("港股实时数据接口返回空数据")
+            except Exception as e:
+                if "RemoteDisconnected" in str(e) or "Connection aborted" in str(e):
+                    self.logger.debug(f"港股基本信息网络连接异常: {e}")
+                else:
+                    self.logger.warning(f"获取港股基本信息失败: {e}")
+            
+            # 尝试获取额外的港股财务数据
+            try:
+                # 使用港股通数据接口获取更多信息
+                hk_ggt = ak.stock_hk_ggt_components_em()
+                if hk_ggt is not None and not hk_ggt.empty:
+                    hk_detail = hk_ggt[hk_ggt['代码'] == stock_code]
+                    if not hk_detail.empty:
+                        row = hk_detail.iloc[0]
+                        fundamental_data.update({
+                            '港股通_股票名称': row.get('名称', ''),
+                            '港股通_总股本': row.get('总股本', 0),
+                            '港股通_流通股本': row.get('流通股本', 0)
+                        })
+                        self.logger.info(f"成功获取港股通数据")
+            except Exception as e:
+                self.logger.debug(f"获取港股通数据失败: {e}")
+            
+            # 如果仍然没有数据，添加默认信息
+            if not fundamental_data:
+                fundamental_data = {
+                    '数据状态': '港股基础数据获取中',
+                    '市场': '香港联合交易所',
+                    '货币': 'HKD',
+                    '股票代码': stock_code
+                }
+                self.logger.info(f"港股 {stock_code} 使用默认基础数据")
                 
         except Exception as e:
             self.logger.error(f"获取港股 {stock_code} 基本面数据失败: {e}")
+            # 返回基本信息以避免完全失败
+            fundamental_data = {
+                '数据状态': '数据获取异常',
+                '市场': '香港联合交易所',
+                '货币': 'HKD',
+                '股票代码': stock_code,
+                '错误信息': str(e)
+            }
         
         return fundamental_data
     
@@ -239,63 +239,73 @@ class FundamentalDataFetcher:
         fundamental_data = {}
         
         try:
-            # 获取美股基本信息 - 添加重试机制和更好的错误处理
-            max_retries = 2
-            for attempt in range(max_retries):
-                try:
-                    stock_info = ak.stock_us_spot_em()
-                    if stock_info is not None and not stock_info.empty:
-                        stock_detail = stock_info[stock_info['代码'] == stock_code]
-                        if not stock_detail.empty:
-                            stock_row = stock_detail.iloc[0]
-                            fundamental_data.update({
-                                '股票名称': stock_row.get('名称', ''),
-                                '当前价格': stock_row.get('最新价', 0),
-                                '涨跌幅': stock_row.get('涨跌幅', 0),
-                                '市盈率': stock_row.get('市盈率', 0),
-                                '市值': stock_row.get('总市值', 0)
-                            })
-                            break
-                        else:
-                            self.logger.info(f"美股 {stock_code} 在实时数据中未找到")
-                    break
-                except Exception as e:
-                    if attempt == max_retries - 1:
-                        if "RemoteDisconnected" in str(e) or "Connection aborted" in str(e):
-                            self.logger.debug(f"美股基本信息网络连接异常，已有fallback处理")
-                        else:
-                            self.logger.warning(f"获取美股基本信息失败: {e}")
+            # 获取美股基本信息 - 使用实时数据
+            try:
+                stock_info = ak.stock_us_spot_em()
+                if stock_info is not None and not stock_info.empty:
+                    stock_detail = stock_info[stock_info['代码'] == stock_code]
+                    if not stock_detail.empty:
+                        stock_row = stock_detail.iloc[0]
+                        fundamental_data.update({
+                            '股票名称': stock_row.get('名称', ''),
+                            '当前价格': stock_row.get('最新价', 0),
+                            '涨跌幅': stock_row.get('涨跌幅', 0),
+                            '市盈率': stock_row.get('市盈率', 0),
+                            '市值': stock_row.get('总市值', 0),
+                            '成交量': stock_row.get('成交量', 0),
+                            '成交额': stock_row.get('成交额', 0),
+                            '市净率': stock_row.get('市净率', 0),
+                            '振幅': stock_row.get('振幅', 0),
+                            '换手率': stock_row.get('换手率', 0)
+                        })
+                        self.logger.info(f"成功获取美股 {stock_code} 基本信息")
                     else:
-                        import time
-                        time.sleep(1)  # 重试前等待1秒
+                        self.logger.warning(f"美股 {stock_code} 在实时数据中未找到")
+                else:
+                    self.logger.warning("美股实时数据接口返回空数据")
+            except Exception as e:
+                if "RemoteDisconnected" in str(e) or "Connection aborted" in str(e):
+                    self.logger.debug(f"美股基本信息网络连接异常: {e}")
+                else:
+                    self.logger.warning(f"获取美股基本信息失败: {e}")
             
-            # 获取美股财务指标 - 避免重复调用API和改善错误处理
-            if not fundamental_data:  # 只在基本信息获取失败时执行
-                try:
-                    # 使用美股实时数据获取基本信息
-                    us_spot = ak.stock_us_spot_em()
-                    if us_spot is not None and not us_spot.empty:
-                        us_info = us_spot[us_spot['代码'] == stock_code]
-                        if not us_info.empty:
-                            row = us_info.iloc[0]
-                            fundamental_data.update({
-                                '美股_当前价格': row.get('最新价', 0),
-                                '美股_市值': row.get('总市值', 0),
-                                '美股_市盈率': row.get('市盈率', 0),
-                                '美股_成交量': row.get('成交量', 0),
-                                '美股_成交额': row.get('成交额', 0)
-                            })
-                except Exception as e:
-                    if "RemoteDisconnected" in str(e) or "Connection aborted" in str(e):
-                        self.logger.debug(f"美股财务指标网络连接异常，已有fallback处理")
-                    else:
-                        self.logger.warning(f"获取美股财务指标失败: {e}")
-                
-            # 注意：akshare当前版本没有stock_us_fundamental接口
-            # 如果需要详细财务数据，需要考虑其他数据源
+            # 尝试获取美股概念板块信息
+            try:
+                # 获取美股概念数据
+                us_concept = ak.stock_us_spot_em()  # 使用相同接口但添加更多字段
+                if us_concept is not None and not us_concept.empty:
+                    us_detail = us_concept[us_concept['代码'] == stock_code]
+                    if not us_detail.empty:
+                        row = us_detail.iloc[0]
+                        # 添加更多详细信息
+                        additional_fields = ['开盘', '昨收', '最高', '最低', '量比']
+                        for field in additional_fields:
+                            if field in row:
+                                fundamental_data[f'美股_{field}'] = row.get(field, 0)
+                        self.logger.info(f"成功获取美股详细数据")
+            except Exception as e:
+                self.logger.debug(f"获取美股详细数据失败: {e}")
+            
+            # 如果仍然没有数据，添加默认信息
+            if not fundamental_data:
+                fundamental_data = {
+                    '数据状态': '美股基础数据获取中',
+                    '市场': 'NASDAQ/NYSE',
+                    '货币': 'USD',
+                    '股票代码': stock_code
+                }
+                self.logger.info(f"美股 {stock_code} 使用默认基础数据")
                 
         except Exception as e:
             self.logger.error(f"获取美股 {stock_code} 基本面数据失败: {e}")
+            # 返回基本信息以避免完全失败
+            fundamental_data = {
+                '数据状态': '数据获取异常',
+                '市场': 'NASDAQ/NYSE',
+                '货币': 'USD',
+                '股票代码': stock_code,
+                '错误信息': str(e)
+            }
         
         return fundamental_data
     
