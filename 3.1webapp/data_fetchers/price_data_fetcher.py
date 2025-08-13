@@ -7,8 +7,9 @@ import logging
 import pandas as pd
 import numpy as np
 from datetime import datetime, timedelta
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 from .market_utils import MarketUtils
+from .data_sources import AkSharePriceDataSource, BasePriceDataSource
 
 
 class PriceDataFetcher:
@@ -32,6 +33,33 @@ class PriceDataFetcher:
         # 分析参数
         params = config.get('analysis_params', {})
         self.technical_period_days = params.get('technical_period_days', 180)
+        
+        # 初始化数据源
+        self.data_sources = self._initialize_data_sources()
+        
+    def _initialize_data_sources(self) -> List[BasePriceDataSource]:
+        """初始化数据源列表"""
+        sources = []
+        
+        # 添加AkShare数据源
+        akshare_source = AkSharePriceDataSource()
+        if akshare_source.is_available():
+            sources.append(akshare_source)
+            self.logger.info("已加载AkShare价格数据源")
+        else:
+            self.logger.warning("AkShare价格数据源不可用")
+        
+        # 这里可以添加其他数据源
+        # 例如: sources.append(YahooFinanceSource())
+        
+        return sources
+    
+    def _get_available_source(self) -> Optional[BasePriceDataSource]:
+        """获取可用的数据源"""
+        for source in self.data_sources:
+            if source.is_available():
+                return source
+        return None
     
     def get_stock_data(self, stock_code: str, period: str = '1y') -> Optional[pd.DataFrame]:
         """
@@ -45,7 +73,7 @@ class PriceDataFetcher:
             pd.DataFrame: 股票价格数据
         """
         stock_code, market = MarketUtils.normalize_stock_code(stock_code)
-        cache_key = f"{market}_{stock_code}"
+        cache_key = f"{market}_{stock_code}_{period}"
         
         # 检查缓存
         if cache_key in self.price_cache:
@@ -54,192 +82,30 @@ class PriceDataFetcher:
                 self.logger.info(f"使用缓存的价格数据: {cache_key}")
                 return data
         
+        self.logger.info(f"正在获取 {market.upper()} {stock_code} 的历史数据 (过去{self.technical_period_days}天)...")
+        
+        # 获取可用的数据源
+        source = self._get_available_source()
+        if not source:
+            self.logger.error("没有可用的价格数据源")
+            return None
+        
         try:
-            import akshare as ak
-            
-            end_date = datetime.now().strftime('%Y%m%d')
-            start_date = (datetime.now() - timedelta(days=self.technical_period_days)).strftime('%Y%m%d')
-            
-            self.logger.info(f"正在获取 {market.upper()} {stock_code} 的历史数据 (过去{self.technical_period_days}天)...")
-            
-            stock_data = None
-            
-            if market == 'a_stock':
-                stock_data = self._get_a_stock_data(stock_code, start_date, end_date, ak)
-            elif market == 'hk_stock':
-                stock_data = self._get_hk_stock_data(stock_code, start_date, end_date, ak)
-            elif market == 'us_stock':
-                stock_data = self._get_us_stock_data(stock_code, start_date, end_date, ak)
+            # 使用数据源获取数据
+            stock_data = source.get_stock_data(stock_code, market, period)
             
             if stock_data is not None and not stock_data.empty:
-                # 标准化列名
-                stock_data = self._standardize_columns(stock_data)
-                
                 # 缓存数据
                 self.price_cache[cache_key] = (datetime.now(), stock_data)
                 self.logger.info(f"成功获取 {len(stock_data)} 条价格数据")
                 return stock_data
             else:
-                self.logger.error(f"获取 {stock_code} 价格数据失败或数据为空")
+                self.logger.warning(f"获取 {stock_code} 价格数据为空")
                 return None
                 
         except Exception as e:
-            self.logger.error(f"获取股票 {stock_code} 价格数据时发生错误: {e}")
+            self.logger.error(f"获取 {market} {stock_code} 价格数据时发生错误: {e}")
             return None
-    
-    def _get_a_stock_data(self, stock_code: str, start_date: str, end_date: str, ak) -> Optional[pd.DataFrame]:
-        """获取A股数据"""
-        try:
-            return ak.stock_zh_a_hist(
-                symbol=stock_code,
-                period="daily",
-                start_date=start_date,
-                end_date=end_date,
-                adjust="qfq"
-            )
-        except Exception as e:
-            self.logger.error(f"获取A股 {stock_code} 数据失败: {e}")
-            return None
-    
-    def _get_hk_stock_data(self, stock_code: str, start_date: str, end_date: str, ak) -> Optional[pd.DataFrame]:
-        """获取港股数据"""
-        try:
-            # 主接口
-            return ak.stock_hk_hist(
-                symbol=stock_code,
-                period="daily",
-                start_date=start_date,
-                end_date=end_date,
-                adjust="qfq"
-            )
-        except Exception as e:
-            self.logger.warning(f"使用港股历史数据接口失败: {e}，尝试备用接口...")
-            try:
-                # 备用接口
-                data = ak.stock_hk_daily(symbol=stock_code, adjust="qfq")
-                if data is not None and not data.empty:
-                    # 过滤日期范围
-                    data = data[data.index >= start_date]
-                    return data
-            except Exception as e2:
-                self.logger.error(f"港股备用接口也失败: {e2}")
-                return None
-    
-    def _get_us_stock_data(self, stock_code: str, start_date: str, end_date: str, ak) -> Optional[pd.DataFrame]:
-        """获取美股数据"""
-        try:
-            # 优先使用 stock_us_daily 接口（已验证可用）
-            try:
-                self.logger.info(f"使用stock_us_daily接口获取 {stock_code} 数据...")
-                data = ak.stock_us_daily(symbol=stock_code, adjust="qfq")
-                if data is not None and not data.empty:
-                    # 处理日期列和索引
-                    if 'date' in data.columns:
-                        data['date'] = pd.to_datetime(data['date'])
-                        data = data.set_index('date')
-                    
-                    # 过滤日期范围
-                    start_dt = pd.to_datetime(start_date, format='%Y%m%d')
-                    end_dt = pd.to_datetime(end_date, format='%Y%m%d')
-                    
-                    # 过滤数据
-                    data = data[(data.index >= start_dt) & (data.index <= end_dt)]
-                    
-                    if not data.empty:
-                        self.logger.info(f"成功获取美股 {stock_code} 历史数据: {len(data)} 条记录")
-                        return data
-                    else:
-                        self.logger.warning(f"指定日期范围内无数据: {stock_code}")
-            except Exception as e:
-                self.logger.warning(f"stock_us_daily接口失败: {e}")
-            
-            # 备用：尝试实时数据接口
-            try:
-                self.logger.info(f"使用实时数据接口获取 {stock_code} 数据...")
-                spot_data = ak.stock_us_spot_em()
-                if spot_data is not None and not spot_data.empty:
-                    # 查找对应股票
-                    stock_row = spot_data[spot_data['代码'] == stock_code]
-                    if not stock_row.empty:
-                        row = stock_row.iloc[0]
-                        # 创建包含多天数据的DataFrame（模拟历史数据）
-                        current_price = float(row['最新价'])
-                        open_price = float(row['开盘价']) if row['开盘价'] != '-' else current_price
-                        high_price = float(row['最高价']) if row['最高价'] != '-' else current_price
-                        low_price = float(row['最低价']) if row['最低价'] != '-' else current_price
-                        volume = float(str(row['成交量']).replace(',', '')) if row['成交量'] != '-' else 1000000
-                        
-                        # 创建近期几天的模拟数据
-                        dates = pd.date_range(end=pd.Timestamp.now().date(), periods=30, freq='D')
-                        # 生成小幅波动的价格数据
-                        price_variation = np.random.normal(0, 0.02, 30)  # 2%的随机波动
-                        prices = current_price * (1 + np.cumsum(price_variation) * 0.1)
-                        
-                        simple_data = pd.DataFrame({
-                            'open': prices * np.random.uniform(0.99, 1.01, 30),
-                            'high': prices * np.random.uniform(1.00, 1.02, 30),
-                            'low': prices * np.random.uniform(0.98, 1.00, 30),
-                            'close': prices,
-                            'volume': [volume] * 30
-                        }, index=dates)
-                        
-                        # 确保最后一天是实际数据
-                        simple_data.iloc[-1] = [open_price, high_price, low_price, current_price, volume]
-                        
-                        self.logger.info(f"使用美股实时数据生成模拟历史数据: {stock_code}")
-                        return simple_data
-                    else:
-                        self.logger.warning(f"实时数据中未找到股票: {stock_code}")
-            except Exception as e:
-                self.logger.warning(f"实时数据接口失败: {e}")
-            
-            return None
-            
-        except Exception as e:
-            self.logger.error(f"获取美股 {stock_code} 数据失败: {e}")
-            return None
-    
-    def _standardize_columns(self, df: pd.DataFrame) -> pd.DataFrame:
-        """
-        标准化DataFrame列名
-        
-        Args:
-            df: 原始数据框
-            
-        Returns:
-            pd.DataFrame: 标准化后的数据框
-        """
-        # 常见的列名映射
-        column_mapping = {
-            '日期': 'date',
-            '开盘': 'open',
-            '收盘': 'close', 
-            '最高': 'high',
-            '最低': 'low',
-            '成交量': 'volume',
-            '成交额': 'amount',
-            '振幅': 'amplitude',
-            '涨跌幅': 'change_pct',
-            '涨跌额': 'change',
-            '换手率': 'turnover',
-            'Open': 'open',
-            'Close': 'close',
-            'High': 'high', 
-            'Low': 'low',
-            'Volume': 'volume',
-            'Amount': 'amount'
-        }
-        
-        # 重命名列
-        df = df.rename(columns=column_mapping)
-        
-        # 确保必要的列存在
-        required_columns = ['open', 'high', 'low', 'close', 'volume']
-        for col in required_columns:
-            if col not in df.columns:
-                self.logger.warning(f"缺少必要列: {col}")
-        
-        return df
     
     def get_price_info(self, price_data: pd.DataFrame) -> Dict[str, Any]:
         """
@@ -251,47 +117,38 @@ class PriceDataFetcher:
         Returns:
             Dict[str, Any]: 价格信息字典
         """
-        if price_data is None or price_data.empty:
-            return {}
+        if price_data is None or price_data.empty or 'close' not in price_data.columns:
+            return {
+                'current_price': 0.0,
+                'price_change': 0.0,
+                'volume_ratio': 1.0,
+                'volatility': 0.0
+            }
         
         try:
-            # 获取最新数据
             latest = price_data.iloc[-1]
-            previous = price_data.iloc[-2] if len(price_data) > 1 else latest
-            
             current_price = float(latest['close'])
-            previous_price = float(previous['close'])
             
-            # 计算变化
-            price_change = current_price - previous_price
-            price_change_pct = (price_change / previous_price) * 100 if previous_price != 0 else 0
-            
-            # 成交量信息
-            current_volume = float(latest.get('volume', 0))
-            avg_volume = float(price_data['volume'].tail(20).mean()) if 'volume' in price_data.columns else 0
-            volume_ratio = current_volume / avg_volume if avg_volume > 0 else 0
-            
-            # 波动率计算（20日）
-            if len(price_data) >= 20:
-                returns = price_data['close'].pct_change().dropna()
-                volatility = float(returns.tail(20).std() * np.sqrt(252) * 100)  # 年化波动率
+            if len(price_data) > 1:
+                prev_price = float(price_data.iloc[-2]['close'])
+                price_change = ((current_price - prev_price) / prev_price) * 100
             else:
-                volatility = 0.0
-            
+                price_change = 0.0
+                
+            # 计算成交量比率
+            volume_ratio = 1.0
+            if 'volume' in price_data.columns and len(price_data) >= 20:
+                current_volume = float(latest['volume']) if not pd.isna(latest['volume']) else 0
+                avg_volume = float(price_data['volume'].tail(20).mean())
+                if avg_volume > 0:
+                    volume_ratio = current_volume / avg_volume
+                
             return {
                 'current_price': current_price,
-                'previous_price': previous_price,
                 'price_change': price_change,
-                'price_change_pct': price_change_pct,
-                'current_volume': current_volume,
-                'avg_volume': avg_volume,
                 'volume_ratio': volume_ratio,
-                'volatility': volatility,
-                'high_52w': float(price_data['high'].max()),
-                'low_52w': float(price_data['low'].min()),
-                'data_points': len(price_data)
+                'volatility': abs(price_change)
             }
-            
         except Exception as e:
-            self.logger.error(f"提取价格信息时发生错误: {e}")
-            return {}
+            self.logger.error(f"计算价格信息失败: {e}")
+            return {'current_price': 0.0, 'price_change': 0.0, 'volume_ratio': 1.0, 'volatility': 0.0}

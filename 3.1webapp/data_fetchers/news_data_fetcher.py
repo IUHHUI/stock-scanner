@@ -9,6 +9,7 @@ import numpy as np
 from datetime import datetime, timedelta
 from typing import Optional, Dict, Any, List
 from .market_utils import MarketUtils
+from .data_sources import AkShareNewsDataSource, BaseNewsDataSource
 
 
 class NewsDataFetcher:
@@ -32,6 +33,33 @@ class NewsDataFetcher:
         # 分析参数
         params = config.get('analysis_params', {})
         self.max_news_count = params.get('max_news_count', 100)
+        
+        # 初始化数据源
+        self.data_sources = self._initialize_data_sources()
+        
+    def _initialize_data_sources(self) -> List[BaseNewsDataSource]:
+        """初始化数据源列表"""
+        sources = []
+        
+        # 添加AkShare数据源
+        akshare_source = AkShareNewsDataSource()
+        if akshare_source.is_available():
+            sources.append(akshare_source)
+            self.logger.info("已加载AkShare新闻数据源")
+        else:
+            self.logger.warning("AkShare新闻数据源不可用")
+        
+        # 这里可以添加其他数据源
+        # 例如: sources.append(TushareNewsSource())
+        
+        return sources
+    
+    def _get_available_source(self) -> Optional[BaseNewsDataSource]:
+        """获取可用的数据源"""
+        for source in self.data_sources:
+            if source.is_available():
+                return source
+        return None
     
     def get_comprehensive_news_data(self, stock_code: str, days: int = 15) -> Dict[str, Any]:
         """
@@ -56,378 +84,104 @@ class NewsDataFetcher:
         
         self.logger.info(f"正在获取 {market.upper()} {stock_code} 的新闻数据 (过去{days}天)...")
         
+        # 获取可用的数据源
+        source = self._get_available_source()
+        if not source:
+            self.logger.error("没有可用的新闻数据源")
+            return {'news': [], 'sentiment': {}}
+        
         try:
-            if market == 'a_stock':
-                data = self._get_a_stock_news_data(stock_code, days)
-            elif market == 'hk_stock':
-                data = self._get_hk_stock_news_data(stock_code, days)
-            elif market == 'us_stock':
-                data = self._get_us_stock_news_data(stock_code, days)
-            else:
-                data = {'news': [], 'sentiment': {}}
+            # 使用数据源获取新闻数据
+            news_list = source.get_stock_news(stock_code, market, days)
+            
+            # 构建新闻数据结构
+            news_data = {
+                'news': news_list,
+                'sentiment': self._calculate_basic_sentiment(news_list)
+            }
             
             # 缓存数据
-            if data and data.get('news'):
-                self.news_cache[cache_key] = (datetime.now(), data)
-                self.logger.info(f"成功获取 {len(data.get('news', []))} 条新闻")
+            if news_data and news_data.get('news'):
+                self.news_cache[cache_key] = (datetime.now(), news_data)
+                self.logger.info(f"成功获取 {len(news_data.get('news', []))} 条新闻")
             
-            return data
+            return news_data
             
         except Exception as e:
             self.logger.error(f"获取 {stock_code} 新闻数据时发生错误: {e}")
             return {'news': [], 'sentiment': {}}
     
-    def _get_a_stock_news_data(self, stock_code: str, days: int) -> Dict[str, Any]:
-        """获取A股新闻数据"""
-        import akshare as ak
-        news_data = {'news': [], 'sentiment': {}}
-        
-        try:
-            # 获取股票新闻
-            try:
-                stock_news = ak.stock_news_em(symbol=stock_code)
-                if not stock_news.empty:
-                    # 按日期过滤
-                    cutoff_date = datetime.now() - timedelta(days=days)
-                    filtered_news = []
-                    
-                    for _, row in stock_news.iterrows():
-                        try:
-                            news_date = pd.to_datetime(row['发布时间'])
-                            if news_date >= cutoff_date:
-                                news_item = {
-                                    'title': str(row.get('新闻标题', '')),
-                                    'content': str(row.get('新闻内容', '')),
-                                    'date': news_date.strftime('%Y-%m-%d %H:%M:%S'),
-                                    'source': str(row.get('新闻来源', ''))
-                                }
-                                filtered_news.append(news_item)
-                        except Exception as e:
-                            continue
-                    
-                    news_data['news'] = filtered_news[:self.max_news_count]
-            except Exception as e:
-                self.logger.warning(f"获取A股新闻失败: {e}")
-            
-            # 获取资金流向作为情绪指标
-            try:
-                # 修正API调用参数
-                money_flow = ak.stock_individual_fund_flow(stock=stock_code, market="sh" if stock_code.startswith('60') else "sz")
-                if not money_flow.empty:
-                    latest_flow = money_flow.iloc[0]
-                    news_data['sentiment']['money_flow'] = {
-                        '主力净流入': float(latest_flow.get('主力净流入', 0)),
-                        '超大单净流入': float(latest_flow.get('超大单净流入', 0)),
-                        '大单净流入': float(latest_flow.get('大单净流入', 0)),
-                        '中单净流入': float(latest_flow.get('中单净流入', 0)),
-                        '小单净流入': float(latest_flow.get('小单净流入', 0))
-                    }
-            except Exception as e:
-                self.logger.warning(f"获取A股资金流向失败: {e}")
-                # 尝试资金流向排行榜
-                try:
-                    flow_rank = ak.stock_individual_fund_flow_rank(indicator="今日")
-                    if not flow_rank.empty:
-                        stock_flow = flow_rank[flow_rank['代码'] == stock_code]
-                        if not stock_flow.empty:
-                            row = stock_flow.iloc[0]
-                            news_data['sentiment']['money_flow_rank'] = {
-                                '主力净额': float(str(row.get('主力净额', 0)).replace(',', '')),
-                                '涨跌幅': float(row.get('涨跌幅', 0))
-                            }
-                except Exception as e2:
-                    self.logger.warning(f"获取资金流向排行失败: {e2}")
-            
-            # 获取龙虎榜数据作为情绪参考
-            try:
-                # 修正API调用 - 不传symbol参数，获取所有数据后过滤
-                start_date = (datetime.now() - timedelta(days=30)).strftime('%Y%m%d')
-                end_date = datetime.now().strftime('%Y%m%d')
-                lhb_data = ak.stock_lhb_detail_em(start_date=start_date, end_date=end_date)
-                if not lhb_data.empty:
-                    # 过滤特定股票的龙虎榜记录
-                    stock_lhb = lhb_data[lhb_data['代码'] == stock_code] if '代码' in lhb_data.columns else pd.DataFrame()
-                    news_data['sentiment']['lhb_activity'] = len(stock_lhb)
-                    if len(stock_lhb) > 0:
-                        news_data['sentiment']['lhb_recent'] = True
-            except Exception as e:
-                self.logger.warning(f"获取A股龙虎榜数据失败: {e}")
-                
-        except Exception as e:
-            self.logger.error(f"获取A股 {stock_code} 新闻数据失败: {e}")
-        
-        return news_data
-    
-    def _get_hk_stock_news_data(self, stock_code: str, days: int) -> Dict[str, Any]:
-        """获取港股新闻数据"""
-        import akshare as ak
-        news_data = {'news': [], 'sentiment': {}}
-        
-        try:
-            # 使用stock_news_em获取港股新闻（已验证支持）
-            try:
-                stock_news = ak.stock_news_em(symbol=stock_code)
-                if not stock_news.empty:
-                    # 按日期过滤
-                    cutoff_date = datetime.now() - timedelta(days=days)
-                    filtered_news = []
-                    
-                    for _, row in stock_news.iterrows():
-                        try:
-                            news_date = pd.to_datetime(row['发布时间'])
-                            if news_date >= cutoff_date:
-                                news_item = {
-                                    'title': str(row.get('新闻标题', '')),
-                                    'content': str(row.get('新闻内容', '')),
-                                    'date': news_date.strftime('%Y-%m-%d %H:%M:%S'),
-                                    'source': str(row.get('文章来源', ''))
-                                }
-                                filtered_news.append(news_item)
-                        except Exception as e:
-                            continue
-                    
-                    news_data['news'] = filtered_news[:self.max_news_count]
-                    self.logger.info(f"成功获取港股 {stock_code} 新闻: {len(news_data['news'])} 条")
-            except Exception as e:
-                self.logger.warning(f"获取港股新闻失败: {e}")
-            
-            # 获取港股市场信息作为情绪参考
-            try:
-                hk_info = ak.stock_hk_spot_em()
-                if hk_info is not None and not hk_info.empty:
-                    hk_detail = hk_info[hk_info['代码'] == stock_code]
-                    if not hk_detail.empty:
-                        stock_row = hk_detail.iloc[0]
-                        news_data['sentiment']['market_info'] = {
-                            '涨跌幅': float(stock_row.get('涨跌幅', 0)),
-                            '成交量': float(str(stock_row.get('成交量', 0)).replace(',', '')),
-                            '换手率': float(stock_row.get('换手率', 0))
-                        }
-            except Exception as e:
-                if "RemoteDisconnected" in str(e) or "Connection aborted" in str(e):
-                    self.logger.debug(f"港股市场信息网络连接异常，继续处理其他数据")
-                else:
-                    self.logger.warning(f"获取港股市场信息失败: {e}")
-                
-        except Exception as e:
-            self.logger.error(f"获取港股 {stock_code} 新闻数据失败: {e}")
-        
-        return news_data
-    
-    def _get_us_stock_news_data(self, stock_code: str, days: int) -> Dict[str, Any]:
-        """获取美股新闻数据"""
-        import akshare as ak
-        news_data = {'news': [], 'sentiment': {}}
-        
-        try:
-            # 使用stock_news_em获取美股新闻（已验证支持）
-            try:
-                stock_news = ak.stock_news_em(symbol=stock_code)
-                if not stock_news.empty:
-                    # 按日期过滤
-                    cutoff_date = datetime.now() - timedelta(days=days)
-                    filtered_news = []
-                    
-                    for _, row in stock_news.iterrows():
-                        try:
-                            news_date = pd.to_datetime(row['发布时间'])
-                            if news_date >= cutoff_date:
-                                news_item = {
-                                    'title': str(row.get('新闻标题', '')),
-                                    'content': str(row.get('新闻内容', '')),
-                                    'date': news_date.strftime('%Y-%m-%d %H:%M:%S'),
-                                    'source': str(row.get('文章来源', ''))
-                                }
-                                filtered_news.append(news_item)
-                        except Exception as e:
-                            continue
-                    
-                    news_data['news'] = filtered_news[:self.max_news_count]
-                    self.logger.info(f"成功获取美股 {stock_code} 新闻: {len(news_data['news'])} 条")
-            except Exception as e:
-                self.logger.warning(f"获取美股新闻失败: {e}")
-            
-            # 获取美股市场信息作为情绪参考
-            try:
-                us_info = ak.stock_us_spot_em()
-                if us_info is not None and not us_info.empty:
-                    us_detail = us_info[us_info['代码'] == stock_code]
-                    if not us_detail.empty:
-                        stock_row = us_detail.iloc[0]
-                        news_data['sentiment']['market_info'] = {
-                            '涨跌幅': float(stock_row.get('涨跌幅', 0)),
-                            '成交量': float(str(stock_row.get('成交量', 0)).replace(',', '')),
-                            '市值': float(str(stock_row.get('总市值', 0)).replace(',', ''))
-                        }
-                    else:
-                        # 如果找不到具体股票，至少提供基本信息
-                        news_data['sentiment']['market_info'] = {
-                            '数据状态': '美股基本信息获取中',
-                            '市场': 'US Stock'
-                        }
-            except Exception as e:
-                self.logger.warning(f"获取美股市场信息失败: {e}")
-                # 提供基础的情绪数据结构
-                news_data['sentiment']['market_info'] = {
-                    '数据状态': f'数据获取异常: {type(e).__name__}',
-                    '备注': '使用离线模式'
-                }
-            
-        except Exception as e:
-            self.logger.error(f"获取美股 {stock_code} 新闻数据失败: {e}")
-        
-        return news_data
-    
-    def analyze_sentiment(self, news_data: Dict[str, Any]) -> Dict[str, Any]:
+    def _calculate_basic_sentiment(self, news_list: List[Dict[str, Any]]) -> Dict[str, Any]:
         """
-        分析新闻情绪
+        计算基础情绪分析
         
         Args:
-            news_data: 新闻数据字典
+            news_list: 新闻列表
             
         Returns:
             Dict[str, Any]: 情绪分析结果
         """
-        sentiment_result = {
-            'overall_sentiment': 0.0,
-            'sentiment_trend': 'neutral',
-            'confidence_score': 0.0,
-            'total_analyzed': 0,
-            'positive_count': 0,
-            'negative_count': 0,
-            'neutral_count': 0
-        }
+        if not news_list:
+            return {
+                'overall_sentiment': 0.0,
+                'sentiment_trend': '中性',
+                'confidence_score': 0.0,
+                'total_analyzed': 0
+            }
         
         try:
-            news_list = news_data.get('news', [])
-            if not news_list:
-                return sentiment_result
+            # 计算平均情绪
+            sentiments = [news.get('sentiment', 0.0) for news in news_list if 'sentiment' in news]
+            overall_sentiment = sum(sentiments) / len(sentiments) if sentiments else 0.0
             
-            # 简单的关键词情绪分析
-            positive_keywords = ['上涨', '增长', '利好', '突破', '创新高', '盈利', '收益', '成功', '优秀', '强劲']
-            negative_keywords = ['下跌', '下降', '利空', '亏损', '风险', '下调', '担忧', '问题', '困难', '危机']
+            # 情绪趋势
+            if overall_sentiment > 0.1:
+                sentiment_trend = '积极'
+            elif overall_sentiment < -0.1:
+                sentiment_trend = '消极'
+            else:
+                sentiment_trend = '中性'
             
-            sentiment_scores = []
-            positive_count = 0
-            negative_count = 0
-            neutral_count = 0
+            # 置信度评分（基于新闻数量）
+            confidence_score = min(len(news_list) / 50.0, 1.0)
             
-            for news_item in news_list[:50]:  # 限制分析数量
-                title = news_item.get('title', '')
-                content = news_item.get('content', '')
-                text = f"{title} {content}"
-                
-                pos_score = sum(1 for word in positive_keywords if word in text)
-                neg_score = sum(1 for word in negative_keywords if word in text)
-                
-                if pos_score > neg_score:
-                    sentiment = 1.0
-                    positive_count += 1
-                elif neg_score > pos_score:
-                    sentiment = -1.0
-                    negative_count += 1
-                else:
-                    sentiment = 0.0
-                    neutral_count += 1
-                
-                sentiment_scores.append(sentiment)
+            return {
+                'overall_sentiment': overall_sentiment,
+                'sentiment_trend': sentiment_trend,
+                'confidence_score': confidence_score,
+                'total_analyzed': len(news_list)
+            }
             
-            if sentiment_scores:
-                overall_sentiment = np.mean(sentiment_scores)
-                confidence_score = min(abs(overall_sentiment) + 0.1, 1.0)
-                
-                if overall_sentiment > 0.1:
-                    sentiment_trend = 'positive'
-                elif overall_sentiment < -0.1:
-                    sentiment_trend = 'negative'
-                else:
-                    sentiment_trend = 'neutral'
-                
-                sentiment_result.update({
-                    'overall_sentiment': float(overall_sentiment),
-                    'sentiment_trend': sentiment_trend,
-                    'confidence_score': float(confidence_score),
-                    'total_analyzed': len(sentiment_scores),
-                    'positive_count': positive_count,
-                    'negative_count': negative_count,
-                    'neutral_count': neutral_count
-                })
-            
-            # 结合资金流向数据
-            money_flow = news_data.get('sentiment', {}).get('money_flow', {})
-            if money_flow:
-                main_flow = money_flow.get('主力净流入', 0)
-                if main_flow > 0:
-                    sentiment_result['overall_sentiment'] += 0.2
-                elif main_flow < 0:
-                    sentiment_result['overall_sentiment'] -= 0.2
-                
-                # 重新调整sentiment_trend
-                if sentiment_result['overall_sentiment'] > 0.1:
-                    sentiment_result['sentiment_trend'] = 'positive'
-                elif sentiment_result['overall_sentiment'] < -0.1:
-                    sentiment_result['sentiment_trend'] = 'negative'
-                else:
-                    sentiment_result['sentiment_trend'] = 'neutral'
-                    
         except Exception as e:
-            self.logger.error(f"分析新闻情绪时发生错误: {e}")
-        
-        return sentiment_result
+            self.logger.error(f"计算情绪分析失败: {e}")
+            return {
+                'overall_sentiment': 0.0,
+                'sentiment_trend': '中性',
+                'confidence_score': 0.0,
+                'total_analyzed': len(news_list)
+            }
     
-    def format_news_data(self, news_data: Dict[str, Any], include_content: bool = False, max_news: int = 10) -> str:
+    def analyze_sentiment(self, news_data: Dict[str, Any]) -> Dict[str, Any]:
         """
-        格式化新闻数据为文本
+        分析新闻情绪（兼容旧接口）
         
         Args:
-            news_data: 新闻数据字典
-            include_content: 是否包含新闻内容
-            max_news: 最大新闻数量
+            news_data: 新闻数据
             
         Returns:
-            str: 格式化后的文本
+            Dict[str, Any]: 情绪分析结果
         """
         if not news_data or not news_data.get('news'):
-            return "暂无相关新闻"
+            return {
+                'overall_sentiment': 0.0,
+                'sentiment_trend': '中性',
+                'confidence_score': 0.0,
+                'total_analyzed': 0
+            }
         
-        formatted_lines = []
-        news_list = news_data.get('news', [])[:max_news]
+        # 如果已经有情绪分析结果，直接返回
+        if 'sentiment' in news_data:
+            return news_data['sentiment']
         
-        for i, news_item in enumerate(news_list, 1):
-            title = news_item.get('title', '无标题')
-            date = news_item.get('date', '')
-            source = news_item.get('source', '')
-            
-            news_header = f"{i}. {title}"
-            if date:
-                news_header += f" ({date})"
-            if source:
-                news_header += f" - {source}"
-            
-            formatted_lines.append(news_header)
-            
-            if include_content:
-                content = news_item.get('content', '')
-                if content and content != '无内容':
-                    # 限制内容长度
-                    content = content[:200] + "..." if len(content) > 200 else content
-                    formatted_lines.append(f"   内容: {content}")
-            
-            formatted_lines.append("")  # 空行分隔
-        
-        # 添加情绪分析摘要
-        sentiment = news_data.get('sentiment', {})
-        if sentiment:
-            formatted_lines.append("情绪分析:")
-            
-            money_flow = sentiment.get('money_flow', {})
-            if money_flow:
-                main_flow = money_flow.get('主力净流入', 0)
-                formatted_lines.append(f"主力净流入: {main_flow:,.0f}万元")
-            
-            market_info = sentiment.get('market_info', {})
-            if market_info:
-                change_pct = market_info.get('涨跌幅', 0)
-                formatted_lines.append(f"当日涨跌幅: {change_pct:.2f}%")
-        
-        return "\n".join(formatted_lines) if formatted_lines else "新闻数据处理中..."
+        # 否则重新计算
+        return self._calculate_basic_sentiment(news_data['news'])
