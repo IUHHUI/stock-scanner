@@ -164,44 +164,12 @@ class AkSharePriceDataSource(BasePriceDataSource):
             except Exception as e:
                 self.logger.debug(f"美股历史接口不可用: {e}")
             
-            # 最后备用方案：创建模拟数据
-            self.logger.warning(f"无法获取 {stock_code} 历史数据，使用模拟数据")
-            return self._create_mock_us_data(stock_code, days)
+            # 所有接口都不可用时，返回None
+            self.logger.error(f"无法获取 {stock_code} 历史数据，所有数据源接口均不可用")
+            return None
             
         except Exception as e:
             self.logger.error(f"获取美股{stock_code}数据失败: {e}")
-            return None
-    
-    def _create_mock_us_data(self, stock_code: str, days: int) -> Optional[pd.DataFrame]:
-        """创建模拟美股数据（当API不可用时）"""
-        try:
-            import numpy as np
-            
-            # 创建日期范围
-            end_date = datetime.now().date()
-            start_date = end_date - timedelta(days=days)
-            dates = pd.date_range(start=start_date, end=end_date, freq='D')
-            
-            # 模拟价格数据（基于一个基准价格）
-            base_price = 150.0  # 基准价格
-            price_changes = np.random.normal(0, 0.02, len(dates))  # 2%的随机波动
-            prices = base_price * np.cumprod(1 + price_changes)
-            
-            # 创建OHLCV数据
-            data = pd.DataFrame({
-                'date': dates,
-                'open': prices * np.random.uniform(0.995, 1.005, len(dates)),
-                'high': prices * np.random.uniform(1.005, 1.02, len(dates)),
-                'low': prices * np.random.uniform(0.98, 0.995, len(dates)),
-                'close': prices,
-                'volume': np.random.randint(1000000, 10000000, len(dates))
-            })
-            
-            self.logger.info(f"创建了 {len(data)} 条模拟美股数据")
-            return data
-            
-        except Exception as e:
-            self.logger.error(f"创建模拟数据失败: {e}")
             return None
     
     def _parse_period(self, period: str) -> int:
