@@ -34,11 +34,12 @@ RUN sed -i 's/deb.debian.org/mirrors.aliyun.com/g' /etc/apt/sources.list.d/debia
 
 # 复制requirements文件
 # 复制应用代码
-COPY config.json requirements-minimal.txt requirements.txt *.py /app/
+COPY config.json requirements.txt *.py /app/
+COPY data_fetchers /app/data_fetchers
 
 # 安装Python依赖 - 分步安装以减少构建失败风险
 RUN pip3 install --upgrade pip -i https://mirrors.aliyun.com/pypi/simple/ \
-    && pip3 install --no-cache-dir --only-binary=all -r requirements-minimal.txt -i https://mirrors.aliyun.com/pypi/simple/
+    && pip3 install --no-cache-dir --only-binary=all -r requirements.txt -i https://mirrors.aliyun.com/pypi/simple/
 
 # 创建必要的目录
 RUN mkdir -p /app/logs /app/cache /app/data

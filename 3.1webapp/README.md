@@ -1,3 +1,17 @@
+# 利用Claude 重构3.1 webapp
+- 把分析流程重构,解耦. 但是对股票的评分好像不准了
+- 增加docker 部署
+- 修复港股,美股新闻查询
+
+## docker 部署
+
+``` shell
+#构建镜像
+docker compose build
+#启动
+docker compose up -d
+```
+  
 # 增强版AI股票分析系统 v3.1
 # 本版本还未完善请勿使用。
 
