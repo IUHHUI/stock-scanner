@@ -6,6 +6,7 @@ AkShare数据源实现 - 基于akshare库的数据源
 import logging
 import pandas as pd
 import numpy as np
+import math
 from datetime import datetime, timedelta
 from typing import Dict, List, Any, Optional
 from .base import BasePriceDataSource, BaseFundamentalDataSource, BaseNewsDataSource, DataSourceError
@@ -461,19 +462,44 @@ class AkShareFundamentalDataSource(BaseFundamentalDataSource):
             return {}
             
         try:
-            indicators = {}
+            financial_indicators = {}
             
             try:
-                financial_data = ak.stock_financial_abstract(symbol=stock_code)
-                if not financial_data.empty:
-                    latest_financial = financial_data.iloc[0]
-                    for col in financial_data.columns:
-                        if col not in ['股票代码', 'symbol']:
-                            indicators[f"财务_{col}"] = latest_financial[col]
+                # 利润表数据
+                income_statement = ak.stock_financial_abstract_ths(symbol=stock_code, indicator="按报告期")
+                if not income_statement.empty:
+                    latest_income = income_statement.iloc[0].to_dict()
+                    financial_indicators.update(latest_income)
             except Exception as e:
-                self.logger.warning(f"获取财务指标失败: {e}")
+                self.logger.warning(f"获取利润表数据失败: {e}")
             
-            return indicators
+            try:
+                # 财务分析指标
+                balance_sheet = ak.stock_financial_analysis_indicator(symbol=stock_code)
+                if not balance_sheet.empty:
+                    latest_balance = balance_sheet.iloc[-1].to_dict()
+                    financial_indicators.update(latest_balance)
+            except Exception as e:
+                self.logger.warning(f"获取财务分析指标失败: {e}")
+            
+            try:
+                # 现金流量表
+                cash_flow_stock_code=stock_code
+                if stock_code.startswith(('00', '30')):
+                    #"深圳证券交易所"
+                    cash_flow_stock_code="sz"+stock_code
+                elif stock_code.startswith(('60', '68')):
+                    #"上海证券交易所"
+                    cash_flow_stock_code="sh"+stock_code
+                cash_flow = ak.stock_cash_flow_sheet_by_report_em(symbol=cash_flow_stock_code)
+                if not cash_flow.empty:
+                    latest_cash = cash_flow.iloc[-1].to_dict()
+                    financial_indicators.update(latest_cash)
+            except Exception as e:
+                self.logger.warning(f"获取现金流量表失败: {e}")
+            
+            # 清理数据
+            return self._clean_financial_data(financial_indicators)
             
         except Exception as e:
             self.logger.error(f"获取财务指标失败: {e}")
@@ -491,13 +517,10 @@ class AkShareFundamentalDataSource(BaseFundamentalDataSource):
             valuation = {}
             
             try:
-                valuation_data = ak.stock_a_ttm_lyr()
-                if not valuation_data.empty and '股票代码' in valuation_data.columns:
-                    stock_data = valuation_data[valuation_data['股票代码'] == stock_code]
-                    if not stock_data.empty:
-                        for col in stock_data.columns:
-                            if col != '股票代码':
-                                valuation[f"估值_{col}"] = stock_data.iloc[0][col]
+                valuation_data = ak.stock_a_indicator_lg(symbol=stock_code)
+                if not valuation_data.empty:
+                    latest_valuation = valuation_data.iloc[-1].to_dict()
+                    valuation = self._clean_financial_data(latest_valuation)
             except Exception as e:
                 self.logger.warning(f"获取估值指标失败: {e}")
             
@@ -506,6 +529,84 @@ class AkShareFundamentalDataSource(BaseFundamentalDataSource):
         except Exception as e:
             self.logger.error(f"获取估值指标失败: {e}")
             return {}
+    
+    def get_performance_forecast(self, stock_code: str, market: str) -> List[Dict[str, Any]]:
+        """获取业绩预告"""
+        if market != 'a_stock':
+            return []
+        
+        if not AKSHARE_AVAILABLE:
+            return []
+            
+        try:
+            performance_forecast = ak.stock_yjbb_em(symbol=stock_code)
+            if not performance_forecast.empty:
+                return performance_forecast.head(10).to_dict('records')
+            return []
+        except Exception as e:
+            self.logger.warning(f"获取业绩预告失败: {e}")
+            return []
+    
+    def get_dividend_info(self, stock_code: str, market: str) -> List[Dict[str, Any]]:
+        """获取分红信息"""
+        if market != 'a_stock':
+            return []
+        
+        if not AKSHARE_AVAILABLE:
+            return []
+            
+        try:
+            dividend_info = ak.stock_fhpg_em(symbol=stock_code)
+            if not dividend_info.empty:
+                return dividend_info.head(10).to_dict('records')
+            return []
+        except Exception as e:
+            self.logger.warning(f"获取分红信息失败: {e}")
+            return []
+    
+    def get_industry_analysis(self, stock_code: str, market: str) -> Dict[str, Any]:
+        """获取行业分析数据"""
+        if not AKSHARE_AVAILABLE:
+            return {}
+            
+        try:
+            industry_data = {}
+            
+            if market == 'a_stock':
+                # A股行业分析
+                try:
+                    industry_info = ak.stock_board_industry_name_em()
+                    stock_industry = industry_info[industry_info.iloc[:, 0].astype(str).str.contains(stock_code, na=False)]
+                    if not stock_industry.empty:
+                        industry_data['industry_info'] = stock_industry.iloc[0].to_dict()
+                except Exception as e:
+                    self.logger.warning(f"获取A股行业信息失败: {e}")
+            
+            elif market == 'hk_stock':
+                # 港股行业分析
+                industry_data['market'] = '港股'
+                industry_data['currency'] = 'HKD'
+            
+            elif market == 'us_stock':
+                # 美股行业分析
+                industry_data['market'] = '美股'
+                industry_data['currency'] = 'USD'
+            
+            return industry_data
+            
+        except Exception as e:
+            self.logger.error(f"获取行业分析失败: {e}")
+            return {}
+    
+    def _clean_financial_data(self, data_dict: Dict[str, Any]) -> Dict[str, Any]:
+        """清理财务数据中的NaN值"""
+        cleaned_data = {}
+        for key, value in data_dict.items():
+            if pd.isna(value) or (isinstance(value, float) and (math.isnan(value) or math.isinf(value))):
+                cleaned_data[key] = None
+            else:
+                cleaned_data[key] = value
+        return cleaned_data
     
     def is_available(self) -> bool:
         """检查数据源是否可用"""
