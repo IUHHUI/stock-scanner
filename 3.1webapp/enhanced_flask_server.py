@@ -128,65 +128,95 @@ class SSEManager:
 # 全局SSE管理器
 sse_manager = SSEManager()
 
-def clean_data_for_json(obj):
+def clean_data_for_json(obj, _seen=None):
     """清理数据中的NaN、Infinity、日期等无效值，使其能够正确序列化为JSON"""
     import pandas as pd
     from datetime import datetime, date, time
     
-    if isinstance(obj, dict):
-        return {key: clean_data_for_json(value) for key, value in obj.items()}
-    elif isinstance(obj, list):
-        return [clean_data_for_json(item) for item in obj]
-    elif isinstance(obj, tuple):
-        return [clean_data_for_json(item) for item in obj]
-    elif isinstance(obj, (int, float)):
-        if math.isnan(obj):
-            return None
-        elif math.isinf(obj):
-            return None
+    # 初始化已访问对象集合，防止循环引用
+    if _seen is None:
+        _seen = set()
+    
+    # 检查循环引用
+    obj_id = id(obj)
+    if obj_id in _seen:
+        return str(obj)  # 对于循环引用的对象，返回字符串表示
+    
+    # 对于复杂对象，添加到已访问集合
+    if isinstance(obj, (dict, list, tuple)) or hasattr(obj, 'to_dict') or hasattr(obj, 'item'):
+        _seen.add(obj_id)
+    
+    try:
+        if isinstance(obj, dict):
+            result = {key: clean_data_for_json(value, _seen) for key, value in obj.items()}
+        elif isinstance(obj, list):
+            result = [clean_data_for_json(item, _seen) for item in obj]
+        elif isinstance(obj, tuple):
+            result = [clean_data_for_json(item, _seen) for item in obj]
+        elif isinstance(obj, (int, float)):
+            if math.isnan(obj):
+                result = None
+            elif math.isinf(obj):
+                result = None
+            else:
+                result = obj
+        elif isinstance(obj, np.ndarray):
+            result = clean_data_for_json(obj.tolist(), _seen)
+        elif isinstance(obj, (np.integer, np.floating)):
+            if np.isnan(obj):
+                result = None
+            elif np.isinf(obj):
+                result = None
+            else:
+                result = obj.item()
+        elif isinstance(obj, (datetime, date)):
+            result = obj.isoformat() if hasattr(obj, 'isoformat') else str(obj)
+        elif isinstance(obj, time):
+            result = obj.isoformat()
+        elif isinstance(obj, pd.Timestamp):
+            result = obj.isoformat()
+        elif isinstance(obj, pd.NaT.__class__):
+            result = None
+        elif pd.isna(obj):
+            result = None
+        elif hasattr(obj, 'to_dict'):  # DataFrame或Series
+            try:
+                dict_obj = obj.to_dict()
+                # 检查返回的字典是否就是原对象，避免无限递归
+                if id(dict_obj) == obj_id:
+                    result = str(obj)
+                else:
+                    result = clean_data_for_json(dict_obj, _seen)
+            except:
+                result = str(obj)
+        elif hasattr(obj, 'item'):  # numpy标量
+            try:
+                item_obj = obj.item()
+                # 检查item()是否返回原对象，避免无限递归
+                if id(item_obj) == obj_id:
+                    result = str(obj)
+                else:
+                    result = clean_data_for_json(item_obj, _seen)
+            except:
+                result = str(obj)
+        elif obj is None:
+            result = None
+        elif isinstance(obj, (str, bool)):
+            result = obj
         else:
-            return obj
-    elif isinstance(obj, np.ndarray):
-        return clean_data_for_json(obj.tolist())
-    elif isinstance(obj, (np.integer, np.floating)):
-        if np.isnan(obj):
-            return None
-        elif np.isinf(obj):
-            return None
-        else:
-            return obj.item()
-    elif isinstance(obj, (datetime, date)):
-        return obj.isoformat() if hasattr(obj, 'isoformat') else str(obj)
-    elif isinstance(obj, time):
-        return obj.isoformat()
-    elif isinstance(obj, pd.Timestamp):
-        return obj.isoformat()
-    elif isinstance(obj, pd.NaT.__class__):
-        return None
-    elif pd.isna(obj):
-        return None
-    elif hasattr(obj, 'to_dict'):  # DataFrame或Series
-        try:
-            return clean_data_for_json(obj.to_dict())
-        except:
-            return str(obj)
-    elif hasattr(obj, 'item'):  # numpy标量
-        try:
-            return clean_data_for_json(obj.item())
-        except:
-            return str(obj)
-    elif obj is None:
-        return None
-    elif isinstance(obj, (str, bool)):
-        return obj
-    else:
-        # 对于其他不可序列化的对象，转换为字符串
-        try:
-            # 尝试直接序列化测试
-            json.dumps(obj)
-            return obj
-        except (TypeError, ValueError):
-            return str(obj)
+            # 对于其他不可序列化的对象，转换为字符串
+            try:
+                # 尝试直接序列化测试
+                json.dumps(obj)
+                result = obj
+            except (TypeError, ValueError):
+                result = str(obj)
+    finally:
+        # 清理已访问集合
+        if obj_id in _seen:
+            _seen.discard(obj_id)
+    logger.debug(f"清理数据,使其能够序列化为JSON: {result}")
+    return result
 
 def check_auth_config():
     """检查鉴权配置"""
