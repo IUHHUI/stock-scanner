@@ -15,6 +15,13 @@ def test_data_sources():
     price_source = AkSharePriceDataSource()
     print(f"价格数据源可用: {price_source.is_available()}")
     
+    # 测试A股价格数据
+    a_data = price_source.get_stock_data('000001', 'a_stock', '1y')
+    if a_data is not None and not a_data.empty:
+        print(f"✅ A股价格数据: {len(a_data)} 条记录")
+    else:
+        print("⚠ A股价格数据获取失败")
+    
     # 测试港股价格数据
     hk_data = price_source.get_stock_data('00700', 'hk_stock', '1y')
     if hk_data is not None and not hk_data.empty:
@@ -34,6 +41,10 @@ def test_data_sources():
     fundamental_source = AkShareFundamentalDataSource()
     print(f"基本面数据源可用: {fundamental_source.is_available()}")
     
+    # 测试A股基本信息
+    a_info = fundamental_source.get_stock_info('000001', 'a_stock')
+    print(f"✅ A股基本信息: {len(a_info)} 个字段")
+    
     hk_info = fundamental_source.get_stock_info('00700', 'hk_stock')
     print(f"✅ 港股基本信息: {len(hk_info)} 个字段")
     
@@ -44,6 +55,10 @@ def test_data_sources():
     print("\n--- 新闻数据源测试 ---")
     news_source = AkShareNewsDataSource()
     print(f"新闻数据源可用: {news_source.is_available()}")
+    
+    # 测试A股新闻数据
+    a_news = news_source.get_stock_news('000001', 'a_stock', 15)
+    print(f"✅ A股新闻数据: {len(a_news)} 条新闻")
     
     hk_news = news_source.get_stock_news('00700', 'hk_stock', 15)
     print(f"✅ 港股新闻数据: {len(hk_news)} 条新闻")
